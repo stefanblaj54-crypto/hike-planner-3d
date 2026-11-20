@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hike Planner 3D</title>
+<meta name="description" content="Plan a hike in 3D: route, terrain, times, forecast and weather, on your phone.">
+<meta name="theme-color" content="#123b2f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hike 3D">
+<script src="js/theme.js"></script>
+<link rel="stylesheet" href="lib/leaflet/leaflet.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top" id="top">
+  <button class="ib" id="menubtn" aria-label="Menu" aria-controls="drawer" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg></button>
+  <button class="ib" id="back" aria-label="Back" hidden><svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg></button>
+  <span class="mark" aria-hidden="true"></span>
+  <h1 id="ttl">Hike Planner 3D</h1>
+  <button class="ib" id="more" aria-label="Hike options" hidden><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></button>
+</header>
+
+<main>
+<!-- home: the next hike as a skyline, then the list of hikes -->
+<section class="screen" id="scr-home" hidden>
+  <div class="hero" id="hero"></div>
+  <div class="list" id="listwrap">
+    <div class="listhead"><h2 id="listh">Your hikes</h2><p class="totals" id="totals"></p></div>
+    <div id="hikes" class="hikes"></div>
+    <div class="install" id="install" hidden></div>
+    <p class="foot">Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.</p>
+  </div>
+</section>
+
+<!-- new hike -->
+<section class="screen" id="scr-new" hidden>
+  <div class="tabs" role="tablist">
+    <button role="tab" id="tab-draw" aria-selected="true">Draw on the map</button>
+    <button role="tab" id="tab-file" aria-selected="false">Import a file</button>
+  </div>
+  <div class="mapwrap">
+    <div id="pmap" aria-label="Planning map"></div>
+    <form class="search" id="search" role="search"><input id="q" type="search" placeholder="Find a place, peak or hut" autocomplete="off" aria-label="Find a place" enterkeyhint="search"><button class="ib" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></button><div class="results" id="results" hidden></div></form>
+    <div class="mapbtns">
+      <button class="ib light" id="locate" aria-label="Show my location" title="Show my location"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg></button>
+      <button class="ib light" id="undo" aria-label="Undo" title="Undo"><svg viewBox="0 0 24 24"><path d="M9 6L4 11l5 5"/><path d="M4 11h10a5.5 5.5 0 0 1 0 11h-3"/></svg></button>
+      <button class="ib light" id="clear" aria-label="Clear the route" title="Clear the route"><svg viewBox="0 0 24 24"><path d="M5 7h14M10 7V4h4v3M7 7l1 13h8l1-13"/></svg></button>
+    </div>
+  </div>
+  <div class="plan">
+    <p class="how" id="how"></p>
+    <div class="filebox" id="filebox" hidden>
+      <label class="btn"><input type="file" id="file" class="vh" accept=".gpx,.kml,.geojson,.json,application/gpx+xml,application/vnd.google-earth.kml+xml,application/geo+json,application/json">Choose a GPX, KML or GeoJSON file</label>
+      <p class="mute small">Export it from Komoot, AllTrails, Mapy.cz, Wikiloc, Outdooractive, Strava or a GPS watch, or save it from an email or website.</p>
+      <button class="btn ghost small" id="reverse" type="button" hidden>Reverse direction</button>
+    </div>
+    <p class="stats" id="rstats" aria-live="polite"></p>
+    <form class="details" id="details">
+      <label class="wide">Name <input id="hname" maxlength="80" placeholder="Leave empty to name it after the start and finish"></label>
+      <label>First day <input type="date" id="hdate" required></label>
+      <label>Days <select id="hdays"><option value="auto">Work it out for me</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></label>
+      <label>Start walking at <input type="time" id="hstart" value="07:00"></label>
+      <label>Pace <select id="hpace"><option value="0.7">Fast (Swiss signpost times)</option><option value="0.85">Fit</option><option value="1" selected>Average (DIN 33466)</option><option value="1.2">Heavy pack or relaxed</option></select></label>
+      <label class="check"><input type="checkbox" id="hbreaks" checked> 10 min rest per hour</label>
+      <button class="btn primary wide" id="buildbtn" disabled>Build the 3D plan</button>
+    </form>
+  </div>
+</section>
+
+<!-- building -->
+<section class="screen" id="scr-build" hidden>
+  <div class="band buildbox">
+    <h2 id="bname">Building your plan</h2>
+    <p class="mute">This takes from a few seconds to about a minute, depending on the length of the route and the connection. Keep the app open.</p>
+    <ol class="steps" id="steps"></ol>
+    <p class="err" id="berr" hidden></p>
+    <div class="row2"><button class="btn primary" id="bagain" hidden>Try again</button><button class="btn ghost" id="bcancel">Cancel</button></div>
+  </div>
+</section>
+
+<!-- customize -->
+<section class="screen" id="scr-custom" hidden>
+  <div class="custom" id="custom"></div>
+</section>
+
+<!-- about -->
+<section class="screen" id="scr-about" hidden>
+  <div class="about">
+    <h2>About Hike Planner 3D</h2>
+    <p>Draw a route on the map or import a GPX file, and the app builds a 3D model of the hike: terrain, walking times, overnight stops, huts and water on the way, and the weather for your days. Saved hikes open without a connection.</p>
+    <h3>Where the information comes from</h3>
+    <dl class="srcs">
+      <dt>Trails and routing</dt><dd><a href="https://brouter.de">BRouter</a>, using OpenStreetMap paths and their difficulty grades.</dd>
+      <dt>Map</dt><dd><a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA), from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> data and SRTM heights.</dd>
+      <dt>Terrain heights</dt><dd>AWS Terrain Tiles (Mapzen), about 10 to 30 m resolution in the mountains.</dd>
+      <dt>Huts, passes, water, place names</dt><dd>OpenStreetMap, through Overpass and Nominatim.</dd>
+      <dt>Weather</dt><dd><a href="https://open-meteo.com">Open-Meteo</a>: the forecast from national weather models, and climate statistics from the ERA5 reanalysis.</dd>
+    </dl>
+    <h3>Good to know</h3>
+    <p><b>Likely weather.</b> Up to 15 days ahead, the chance of each weather type is the share of the 51 runs of the ECMWF forecast model that give it. Further ahead, it is how often each type happened at this place on these dates over the last 10 years (ERA5 weather records). Valley fog has no percentage, because both sources are too coarse to tell a foggy valley from the sunny ridge above it.</p>
+    <p>Times follow the DIN 33466 hiking formula, adjusted for your pace, rests and the weather. Heights come from satellite data, so summits can read a little low. The plan is a guide: on the ground, follow the waymarks, check the national weather service, and turn back when conditions change.</p>
+    <p class="mute small" id="ver"></p>
+  </div>
+</section>
+
+<!-- viewer -->
+<section class="screen" id="scr-view" hidden>
+  <div class="vhead"><ul class="figs" id="figs"></ul><span class="vh" id="vname"></span></div>
+  <div class="stagewrap">
+    <section class="stage" id="stage" aria-label="3D map of the route">
+      <canvas id="cv"></canvas>
+      <div class="flash" id="flash"></div>
+      <div id="labels"></div>
+      <div class="tag" id="tag" hidden></div>
+      <div class="msg" id="msg">Building the 3D view…</div>
+      <div class="wpill" id="wpill" hidden></div>
+      <div class="legend" id="legend"></div>
+      <div class="hint" id="hint"></div>
+      <div class="north" id="north" aria-hidden="true"><span>N</span></div>
+      <button class="reset" id="reset">Reset view</button>
+    </section>
+    <div class="tools">
+      <div class="seg" role="group" aria-label="Map style" id="mapseg"></div>
+      <div class="seg" role="group" aria-label="Line colour" id="colorseg"></div>
+      <div class="seg" role="group" aria-label="Height exaggeration"><span>Height</span><button data-ex="1">1×</button><button data-ex="1.5">1.5×</button><button data-ex="2">2×</button></div>
+    </div>
+    <div class="readout" id="readout" aria-live="off"></div>
+  </div>
+  <div class="wbar">
+    <h3>Weather</h3>
+    <div class="wchips" id="wchips" role="group" aria-label="Weather"></div>
+    <label id="monlab">Month <select id="mon"></select></label>
+    <button class="btn small ghost" id="fcbtn" hidden>Update forecast</button>
+  </div>
+  <div class="bar">
+    <div class="chips" id="chips" role="group" aria-label="Choose a day"></div>
+    <div class="when">
+      <label>First day <input type="date" id="vdate"></label>
+      <label>Days <select id="ndays"></select></label>
+      <label>Start <input type="time" id="start" value="07:00"></label>
+      <label>Pace <select id="pace"><option value="0.7">Fast</option><option value="0.85">Fit</option><option value="1">Average</option><option value="1.2">Heavy pack</option></select></label>
+      <label><input type="checkbox" id="breaks"> 10 min rest per hour</label>
+      <button class="play" id="play">Walk day 1 ▶</button>
+    </div>
+  </div>
+  <section class="brief" id="brief" aria-live="polite"></section>
+  <section class="band">
+    <h2>Height profile</h2>
+    <p class="sub" id="profsub">Whole trip. Tap a day to zoom in; move along the profile to move the marker on the map.</p>
+    <div class="fig"><svg id="prof" role="img" aria-label="Elevation profile with the weather"></svg></div>
+    <div class="plegend" id="plegend"></div>
+  </section>
+  <section class="band" style="padding-top:0">
+    <h2>Day by day</h2>
+    <p class="sub">Arrival times use the start time, pace, rests and the weather above.</p>
+    <div class="scroll"><table class="stack" id="tbl"><thead><tr><th>Day</th><th>Route</th><th class="n">Distance</th><th class="n">Climb</th><th class="n">Descent</th><th class="n">Highest</th><th class="n">Walking</th><th class="n">Arrive</th><th>Likely weather</th></tr></thead><tbody></tbody></table></div>
+  </section>
+  <section class="band notes" style="padding-top:0">
+    <p><b>A plan, not a guarantee.</b> The line follows OpenStreetMap paths (or your file) and heights come from satellite terrain data, so summits and passes can read a little low. On the ground, follow the waymarks and signposts, and check the local rules for camping and huts.</p>
+    <p><b>Times</b> use the DIN 33466 hiking formula (4 km/h on the flat, 300 m/h up, 500 m/h down; the larger plus half the smaller), scaled by your pace. Bad weather adds rough allowances: 4–20% on wet ground, 25–70% on snow, more on ice, about 10% in thick cloud or strong gusts.</p>
+    <p><b>Weather types</b> are typical patterns, timed against your walk, using temperature statistics for this place and height. <b>Forecast</b> uses Open-Meteo's hourly forecast at points along the route; it appears 16 days before your start and updates when you open the hike with a connection. Before you go, also check the national weather service and its warnings. <span id="vsrc"></span></p>
+    <p><b>Difficulty</b> grades are OpenStreetMap's sac_scale tags (for routes drawn here); imported files show steepness instead: the slope of the path in degrees, averaged over about 200 m. Water points are springs and taps marked on OpenStreetMap; check that they run.</p>
+    <p>Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM · map style © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA) · terrain: AWS Terrain Tiles (Mapzen) · routing: <a href="https://brouter.de">BRouter</a> · weather: <a href="https://open-meteo.com">Open-Meteo</a> (ERA5 and national weather models) · place search: Nominatim.</p>
+  </section>
+</section>
+</main>
+
+<div class="drawer" id="drawer" hidden>
+  <nav class="dbox" id="dbox" aria-label="Menu">
+    <div class="dhead"><span class="mark" aria-hidden="true"></span><b>Hike Planner 3D</b><button class="ib" id="dclose" aria-label="Close the menu"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <button class="ditem" data-go="home"><svg viewBox="0 0 24 24"><path d="M3 19l6-9 4 6 3-4 5 7z"/></svg>Your hikes</button>
+    <button class="ditem" data-go="new"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M7.5 16.5c3-1 1-5 4.5-6s4-2 4.5-2.5"/></svg>Plan a new hike</button>
+    <button class="ditem" data-go="import"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg>Import a route file</button>
+    <button class="ditem" data-go="customize"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M12 3.5a8.5 8.5 0 0 0 0 17" fill="currentColor" stroke="none"/></svg>Customize</button>
+    <button class="ditem" data-go="install" id="dinstall"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M12 7v7M9.5 11.5L12 14l2.5-2.5"/></svg>Install on your phone</button>
+    <button class="ditem" data-go="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.2"/></svg>About and data sources</button>
+    <p class="dfoot" id="dfoot"></p>
+  </nav>
+</div>
+<div class="sheet" id="sheet" hidden>
+  <div class="sheetbox" role="dialog" aria-modal="true" aria-labelledby="shttl">
+    <h3 id="shttl">This hike</h3>
+    <button class="row" data-act="rename">Rename</button>
+    <button class="row" data-act="gpx">Export the route as GPX</button>
+    <button class="row" data-act="forecast">Update the forecast</button>
+    <button class="row danger" data-act="delete">Delete this hike</button>
+    <button class="row" data-act="close">Close</button>
+  </div>
+</div>
+<div class="dialog" id="dialog" hidden><div class="dlgbox" role="dialog" aria-modal="true"><p id="dlgmsg"></p><input id="dlginput" hidden maxlength="80" aria-label="Name"><div class="dlgbtns"><button class="btn ghost" id="dlgno">Cancel</button><button class="btn primary" id="dlgok">OK</button></div></div></div>
+<div class="toast" id="toast" role="status" hidden></div>
+<input type="file" id="photoin" accept="image/*" class="vh" tabindex="-1" aria-hidden="true">
+
+<script src="lib/three/three.min.js"></script>
+<script src="lib/three/OrbitControls.js"></script>
+<script src="lib/three/lines/LineSegmentsGeometry.js"></script>
+<script src="lib/three/lines/LineGeometry.js"></script>
+<script src="lib/three/lines/LineMaterial.js"></script>
+<script src="lib/three/lines/LineSegments2.js"></script>
+<script src="lib/three/lines/Line2.js"></script>
+<script src="lib/leaflet/leaflet.js"></script>
+<script src="js/core.js"></script>
+<script src="js/build.js"></script>
+<script src="js/viewer.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

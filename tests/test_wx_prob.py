@@ -1,0 +1,47 @@
+"""The chance of each weather type: forecast runs (near dates) and the weather record (far dates)."""
+import asyncio, datetime, sys
+from playwright.async_api import async_playwright
+import test_app as T, test_home as H
+S=T.SHOTS
+async def viewer_checks(pg,tag):
+    print(tag,"CHIPS:",(await pg.inner_text("#wchips")).replace("\n"," "))
+    await pg.locator("#brief").scroll_into_view_if_needed(); await pg.wait_for_timeout(300)
+    print(tag,"LIKELY:",(await pg.inner_text(".likely")).replace("\n"," | "))
+    print(tag,"DAY LINES:",[t.replace("\n"," ") for t in await pg.locator(".dlikely p").all_inner_texts()])
+    print(tag,"TABLE LAST COL:",await pg.locator("#tbl tbody td[data-l='Likely weather']").all_inner_texts())
+    await pg.screenshot(path=S+f"p_{tag}_brief.png")
+    await pg.click("[data-day='2']"); await pg.wait_for_timeout(1200)
+    print(tag,"DAY 2 CHIPS:",(await pg.inner_text("#wchips")).replace("\n"," "))
+    await pg.locator("#brief").scroll_into_view_if_needed(); await pg.wait_for_timeout(300)
+    print(tag,"DAY 2 LIKELY:",(await pg.inner_text(".likely")).replace("\n"," | ")[:300])
+    await pg.evaluate("window.scrollTo(0,0)"); await pg.wait_for_timeout(1500); await pg.screenshot(path=S+f"p_{tag}_top.png")
+async def main():
+    async with async_playwright() as p:
+        b=await p.chromium.launch(executable_path=T.CHROME,headless=True,args=T.ARGS)
+        ctx=await b.new_context(viewport={"width":1280,"height":900},ignore_https_errors=True)
+        log,errs=[],[]; await T.mock(ctx,log); pg=await ctx.new_page(); T.watch(pg,errs)
+        await pg.goto(T.BASE+"?nosw#/",wait_until="load")
+        await H.build(pg,(datetime.date.today()+datetime.timedelta(days=2)).isoformat()); await pg.wait_for_timeout(2500)
+        await viewer_checks(pg,"near")
+        await H.build(pg,"2027-07-15",name="Bärentrek next summer"); await pg.wait_for_timeout(2500)
+        await viewer_checks(pg,"far")
+        await pg.goto(T.BASE+"?nosw&hour=15#/",wait_until="load"); await pg.wait_for_timeout(1500)
+        print("HOME HERO:",(await pg.inner_text("#hero .hero-body")).replace("\n"," | "))
+        await pg.screenshot(path=S+"p_home_near.png")
+        ctx2=await b.new_context(**H.PHONE,ignore_https_errors=True); await T.mock(ctx2,log); pg2=await ctx2.new_page(); T.watch(pg2,errs)
+        await pg2.goto(T.BASE+"?nosw#/",wait_until="load"); await H.build(pg2,"2027-07-15",name="Bärentrek next summer")
+        await pg2.goto(T.BASE+"?nosw&hour=10#/",wait_until="load"); await pg2.wait_for_timeout(1500)
+        print("PHONE HERO FAR:",(await pg2.inner_text("#hero .hero-body")).replace("\n"," | "))
+        await pg2.screenshot(path=S+"p_home_far_phone.png")
+        await pg2.goto(T.BASE+"?nosw#/",wait_until="load"); await H.build(pg2,(datetime.date.today()+datetime.timedelta(days=2)).isoformat())
+        await pg2.goto(T.BASE+"?nosw&hour=16#/",wait_until="load"); await pg2.wait_for_timeout(1500)
+        await pg2.screenshot(path=S+"p_home_near_phone.png")
+        await pg2.click(".hike"); await pg2.wait_for_function("document.querySelector('#msg').hidden",timeout=60000); await pg2.wait_for_timeout(1500)
+        await pg2.evaluate("window.scrollTo(0, document.querySelector('.wbar').getBoundingClientRect().top+scrollY-60)"); await pg2.wait_for_timeout(500)
+        await pg2.screenshot(path=S+"p_phone_wbar.png")
+        await pg2.evaluate("window.scrollTo(0, document.querySelector('#brief').getBoundingClientRect().top+scrollY-60)"); await pg2.wait_for_timeout(500)
+        await pg2.screenshot(path=S+"p_phone_brief.png")
+        print("REQUESTS:",log)
+        print("ERRORS:","\n".join(e for e in errs if "GPU stall" not in e and "no longer repeat" not in e) or "none")
+        await b.close()
+asyncio.run(main())
