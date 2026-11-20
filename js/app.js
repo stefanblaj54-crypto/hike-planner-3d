@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='1.3';
+const VERSION='1.4';
 const SCREENS=['home','new','build','view','custom','about'];
 let cur='',viewId=null,building=null,installEvt=null;
 
@@ -288,7 +288,7 @@ $('#search').addEventListener('submit',async e=>{e.preventDefault();const q=$('#
 document.addEventListener('click',e=>{if(!e.target.closest('#search'))$('#results').hidden=true});
 
 /* ---------- building ---------- */
-const STEPS=[['route','The route'],['terrain','Terrain heights'],['map','Map picture'],['places','Huts, passes, water and place names'],['weather','Climate statistics and the forecast'],['save','Saving on this phone']];
+const STEPS=[['route','The route'],['terrain','Terrain heights'],['map','Map and satellite pictures'],['places','Huts, passes, water and place names'],['weather','Climate statistics and the forecast'],['save','Saving on this phone']];
 function stepSet(k,f,note){const li=$(`#steps [data-k="${k}"]`);if(!li)return;li.className=f>=1?'done':f<0?'fail':'work';li.querySelector('.pb>span').style.width=Math.round(Math.max(0,Math.min(1,f))*100)+'%';if(note!=null)li.querySelector('small').textContent=note}
 function cancelBuild(){if(building){building.abort();building=null}}
 $('#bcancel').addEventListener('click',()=>{cancelBuild();show('new','New hike');refreshNewMap()});
@@ -324,7 +324,7 @@ async function startBuild(){
     const {D,blobs}=await HP.buildPlan(input,opts,(k,f,note)=>{if(ac===building)stepSet(k,f,note)},ac.signal);
     if(ac!==building)return;
     stepSet('save',.3);D.id=newId();
-    const thumb=await HP.thumb(D,blobs.topo||blobs.relief);
+    const thumb=await HP.thumb(D,blobs.sat||blobs.topo||blobs.relief);
     await HP.db.save(metaOf(D,thumb),D,blobs);stepSet('save',1);
     if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
     building=null;Object.assign(NEW,{pts:[],hist:[],routed:null,file:null,err:''});$('#hname').value='';delete $('#hname').dataset.auto;
@@ -338,11 +338,14 @@ $('#bagain').addEventListener('click',startBuild);
 /* ---------- a saved hike ---------- */
 let saveT=0,pending=null;
 function onPlanChange(D){pending=D;clearTimeout(saveT);saveT=setTimeout(flushSave,700);if(cur==='view')$('#ttl').textContent=D.name}
+// a new list picture for a hike wins over any list entry written from an older read (forecast refresh, plan save)
+const THUMBS={},putMeta0=HP.db.putMeta;HP.db.putMeta=m=>{if(m&&THUMBS[m.id])m.thumb=THUMBS[m.id];return putMeta0(m)};
+HP.setThumb=async(id,t)=>{THUMBS[id]=t;const m=await HP.db.meta(id);if(m)await HP.db.putMeta(m)};
 async function flushSave(){clearTimeout(saveT);const D=pending;pending=null;if(!D)return;
   try{await HP.db.putPlan(D.id,D);const m=await HP.db.meta(D.id);if(m)await HP.db.putMeta(Object.assign(m,metaOf(D,m.thumb)))}catch(e){HP.toast('Could not save the change: '+e.message)}}
 addEventListener('visibilitychange',()=>{if(document.hidden)flushSave()});addEventListener('pagehide',flushSave);
 async function openHike(id){if(cur==='view'&&viewId===id)return;
-  let D,blobs;try{D=await HP.db.plan(id);if(D)blobs={topo:await HP.db.blob(id+':topo'),relief:await HP.db.blob(id+':relief')}}catch(e){HP.toast('This hike could not be read: '+e.message)}
+  let D,blobs;try{D=await HP.db.plan(id);if(D){blobs={};for(const k of['topo','relief','sat','dem'])blobs[k]=await HP.db.blob(id+':'+k)}}catch(e){HP.toast('This hike could not be read: '+e.message)}
   if(!D){HP.toast('This hike is no longer saved on this phone.');replace('#/');return}
   if(!D.id)D.id=id;viewId=id;show('view',D.name);HP.viewer.open(D,blobs,onPlanChange)}
 $('#more').addEventListener('click',()=>{$('#sheet').hidden=false;$('#sheet .row').focus()});

@@ -65,7 +65,8 @@ async def main():
 
             # B: a change on the website, no version bump in the service worker
             await pg.wait_for_timeout(2500)
-            await pg.evaluate("window.__mark=1")
+            # the app never reloads by itself twice within 30 s; A may have just done so, so start B with a clean slate
+            await pg.evaluate("window.__mark=1;sessionStorage.removeItem('hp-upd')")
             edit('js/app.js', f"const VERSION='{cur}';", f"const VERSION='{cur}-live1';")
             t0 = time.time(); await pg.evaluate("HP.update.check()")
             print('B update shown:', await ver(pg, cur + '-live1'), f'after {time.time()-t0:.1f}s | reloaded:', await pg.evaluate("window.__mark===undefined"))

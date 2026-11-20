@@ -46,13 +46,32 @@ async function loadDEM(bb,zd,prog,signal){
     const X=Math.min(Math.max((bb.x0+px)*k-this.ox-.5,0),W-1.001),Y=Math.min(Math.max((bb.y0+py)*k-this.oy-.5,0),H-1.001),c=Math.floor(X),rr=Math.floor(Y),fx=X-c,fy=Y-rr,q=rr*W+c;
     return h[q]*(1-fx)*(1-fy)+h[q+1]*fx*(1-fy)+h[q+W]*(1-fx)*fy+h[q+W+1]*fx*fy}}}
 
-async function loadTopo(bb,zt,maxW,prog,signal){
+// satellite pictures: Sentinel-2 cloudless by EOX, free for personal use with this credit shown next to the picture
+const SAT={year:2025,zmax:13,url:(z,x,y)=>`https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/${z}/${y}/${x}.jpg`};
+HP.SAT_CREDIT={text:'Sentinel-2 cloudless 2025 by EOX',href:'https://s2maps.eu',full:'Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025)'};
+const topoURL=(z,x,y)=>`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${z}/${x}/${y}.png`;
+// the most detailed zoom whose tiles fit the limits
+const pickZoom=(bb,zmax,maxTiles,maxW)=>{let z=zmax;while(z>9){const k=2**(z-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=maxTiles&&bb.w*k<=maxW)break;z--}return z};
+async function loadTopo(bb,zt,maxW,prog,signal,url=topoURL,bg='#eef0ea',q=.84){
   const k=2**(zt-Z),X0=bb.x0*k,Y0=bb.y0*k,W=bb.w*k,H=bb.h*k,f=Math.min(1,maxW/Math.max(W,H)),cw=Math.round(W*f),ch=Math.round(H*f);
-  const cv=document.createElement('canvas');cv.width=cw;cv.height=ch;const cx=cv.getContext('2d');cx.fillStyle='#eef0ea';cx.fillRect(0,0,cw,ch);cx.imageSmoothingQuality='high';
-  const r=tileRange(X0,Y0,X0+W,Y0+H),list=[];for(let x=r.tx0;x<=r.tx1;x++)for(let y=r.ty0;y<=r.ty1;y++)list.push({x,y,url:`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${zt}/${x}/${y}.png`});
+  const cv=document.createElement('canvas');cv.width=cw;cv.height=ch;const cx=cv.getContext('2d');cx.fillStyle=bg;cx.fillRect(0,0,cw,ch);cx.imageSmoothingQuality='high';
+  const r=tileRange(X0,Y0,X0+W,Y0+H),list=[];for(let x=r.tx0;x<=r.tx1;x++)for(let y=r.ty0;y<=r.ty1;y++)list.push({x,y,url:url(zt,x,y)});
   let miss=0;await loadTiles(list,6,(t,im,done)=>{if(im){const dx=Math.floor((t.x*256-X0)*f),dy=Math.floor((t.y*256-Y0)*f),dw=Math.ceil((t.x*256+256-X0)*f)-dx,dh=Math.ceil((t.y*256+256-Y0)*f)-dy;cx.drawImage(im,dx,dy,dw,dh);if(im.close)im.close()}else miss++;prog(done/list.length)},signal);
   if(miss>list.length*.35){cv.width=cv.height=0;return null}
-  const b=await new Promise(ok=>cv.toBlob(ok,'image/jpeg',.84));cv.width=cv.height=0;return b}
+  const b=await new Promise(ok=>cv.toBlob(ok,'image/jpeg',q));cv.width=cv.height=0;return b}
+const loadSat=(bb,prog,signal)=>loadTopo(bb,pickZoom(bb,SAT.zmax,220,5200),coarse()?3072:4096,prog,signal,SAT.url,'#3d4a3c',.86);
+// the heights at the full detail of the elevation tiles, kept with the hike for the shading of the 3D model
+// (0.2 m steps above the lowest point, at the same zoom as the elevation tiles)
+function demBlob(bb,dem){const k=dem.k,w=Math.max(2,Math.round(bb.w*k)),h=Math.max(2,Math.round(bb.h*k)),a=new Float32Array(w*h);let lo=1e9;
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=dem.at((x+.5)/k,(y+.5)/k);a[y*w+x]=v;if(v<lo)lo=v}
+  const q=new Uint16Array(w*h);for(let i=0;i<w*h;i++)q[i]=Math.max(0,Math.min(65535,Math.round((a[i]-lo)*5)));
+  return{info:{w,h,min:Math.floor(lo),q:.2},blob:new Blob([q.buffer],{type:'application/octet-stream'})}}
+const demZoom=bb=>{let zd=13;while(zd>9){const k=2**(zd-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=36&&bb.w*k<=2800)break;zd--}return zd};
+// saved hikes from before version 1.4 get the satellite picture and the detailed heights the first time they open with a connection
+HP.fetchExtras=async function(D,need,prog,signal){const bb={x0:D.x0,y0:D.y0,w:D.w,h:D.h},out={},parts=[];let fs=0,fd=0;const tell=()=>prog&&prog((need.sat?fs:0)*.75+(need.dem?fd:0)*.25,need);
+  if(need.dem)parts.push(loadDEM(bb,demZoom(bb),f=>{fd=f;tell()},signal).then(dem=>{const r=demBlob(bb,dem);out.dem=r.blob;out.demInfo=r.info}));
+  if(need.sat)parts.push(loadSat(bb,f=>{fs=f;tell()},signal).then(b=>{out.sat=b}));
+  await Promise.all(parts);return out};
 
 function reliefBlob(grid,mpp){
   const{cols,rows,step,h}=grid,S=Math.min(4,Math.floor(2400/(Math.max(cols,rows)-1))||1),w=(cols-1)*S+1,hh=(rows-1)*S+1;
@@ -209,8 +228,7 @@ HP.buildPlan=async function(input,opts,progress,signal){
   if(bb.w*mpp>140000||bb.h*mpp>140000)throw Error('This route covers more than about 120 km. Split it into shorter parts and plan each one.');
   step('route',1,`${(rs.L/1000).toFixed(1)} km`);
   // 2. terrain
-  let zd=13;while(zd>9){const k=2**(zd-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=36&&bb.w*k<=2800)break;zd--}
-  const dem=await loadDEM(bb,zd,f=>step('terrain',f),signal);
+  const dem=await loadDEM(bb,demZoom(bb),f=>step('terrain',f),signal),demR=demBlob(bb,dem);
   const GS=Math.max(4,Math.ceil(Math.max(bb.w,bb.h)/(coarse()?420:540))),cols=Math.floor((bb.w-1)/GS)+1,rows=Math.floor((bb.h-1)/GS)+1,gh=new Int16Array(cols*rows);
   let hmin=1e9,hmax=-1e9;for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){const v=Math.round(dem.at(c*GS+.5,r*GS+.5));gh[r*cols+c]=v;if(v<hmin)hmin=v;if(v>hmax)hmax=v}
   const R={lat:rs.lat,lon:rs.lon,x:new Float32Array(m),y:new Float32Array(m),e:null,d:new Float32Array(m),t:new Float32Array(m),day:new Uint8Array(m),sac:new Uint8Array(m)};
@@ -221,7 +239,9 @@ HP.buildPlan=async function(input,opts,progress,signal){
   step('terrain',1,`${cols}×${rows} points`);
   // 3. map picture, in parallel with places
   let zt=15;while(zt>10){const k=2**(zt-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=(coarse()?110:160)&&bb.w*k<=7000)break;zt--}
-  const topoP=loadTopo(bb,zt,coarse()?3072:4096,f=>step('map',f),signal).catch(e=>{if(signal&&signal.aborted)throw e;return null});
+  let ft=0,fs=0;const mp=()=>step('map',(ft+fs)/2);
+  const topoP=loadTopo(bb,zt,coarse()?3072:4096,f=>{ft=f;mp()},signal).catch(e=>{if(signal&&signal.aborted)throw e;return null});
+  const satP=loadSat(bb,f=>{fs=f;mp()},signal).catch(e=>{if(signal&&signal.aborted)throw e;console.warn('satellite',e);return null});
   // 4. places
   step('places',.1);
   const box={s:geo.lat(bb.y0+bb.h,Z),n:geo.lat(bb.y0,Z),w:geo.lon(bb.x0,Z),e:geo.lon(bb.x0+bb.w,Z)};
@@ -252,12 +272,12 @@ HP.buildPlan=async function(input,opts,progress,signal){
   if(!names.start)names.start=endNear(0)||await placeName(R.lat[0],R.lon[0],signal);
   if(!names.end){const loop=geo.hav(R.lat[0],R.lon[0],R.lat[m-1],R.lon[m-1])<400;names.end=loop?names.start:(endNear(m-1)||await placeName(R.lat[m-1],R.lon[m-1],signal))}
   step('places',1,points.length?`${points.length} places on the way`:'no place names found');
-  const topo=await topoP;step('map',1,topo?'':'map picture unavailable; relief only');
+  const topo=await topoP,sat=await satP;step('map',1,sat&&topo?'':sat?'satellite only':topo?'map only, no satellite picture':'map pictures unavailable; relief only');
   // 5. assemble, days and times
   const grid={step:GS,cols,rows,h:gh};
-  const D={v:1,name:opts.name||`${names.start||'Hike'} to ${names.end||'finish'}`,date:opts.date,created:Date.now(),z:Z,w:bb.w,h:bb.h,mpp,x0:bb.x0,y0:bb.y0,center:{lat:cLat,lon:cLon},
-    grid,route:R,seg,sacKnown,points:points.sort((a,b)=>a.i-b.i).map(({name,kind,i})=>({name,kind,i})),landmarks,official,water:[...new Set(water)].sort((a,b)=>a-b),names,terr:{min:hmin,max:hmax},
-    set:{start:opts.start||'07:00',pace:+opts.pace||1,breaks:opts.breaks!==false,wx:'fair',mon:u.parseDay(opts.date).getMonth()+1,ex:1.5,map:topo?'topo':'relief',color:'day'}};
+  const D={v:2,name:opts.name||`${names.start||'Hike'} to ${names.end||'finish'}`,date:opts.date,created:Date.now(),z:Z,w:bb.w,h:bb.h,mpp,x0:bb.x0,y0:bb.y0,center:{lat:cLat,lon:cLon},
+    grid,dem:demR.info,route:R,seg,sacKnown,points:points.sort((a,b)=>a.i-b.i).map(({name,kind,i})=>({name,kind,i})),landmarks,official,water:[...new Set(water)].sort((a,b)=>a-b),names,terr:{min:hmin,max:hmax},
+    set:{start:opts.start||'07:00',pace:+opts.pace||1,breaks:opts.breaks!==false,wx:'fair',mon:u.parseDay(opts.date).getMonth()+1,ex:1.5,map:sat?'sat':topo?'topo':'relief',color:'day'}};
   const total=seg.reduce((s,v)=>s+v,0)*D.set.pace;
   const nd=opts.days==='auto'||!opts.days?Math.max(1,Math.round(total/6.5)):+opts.days;
   HP.splitDays(D,nd);
@@ -272,7 +292,7 @@ HP.buildPlan=async function(input,opts,progress,signal){
   if(HP.forecastWindow(D.date).ok){try{D.fc=await HP.fetchForecast(D,signal);D.tz=D.tz||D.fc.tz;D.set.wx='fc'}catch(e){if(signal&&signal.aborted)throw e;console.warn('forecast',e)}
     try{D.ens=await HP.fetchEnsemble(D,signal)}catch(e){if(signal&&signal.aborted)throw e;console.warn('forecast runs',e)}}
   step('weather',1,D.fc?'forecast and climate':D.clim.rough?'rough climate estimate':'climate statistics');
-  return{D,blobs:{topo,relief}}};
+  return{D,blobs:{topo,relief,sat,dem:demR.blob}}};
 
 /* ---------- a small picture for the list of hikes ---------- */
 HP.thumb=async function(D,blob){try{const bm=await createImageBitmap(blob),W=360,H=Math.round(W*Math.min(.75,D.h/D.w)),cv=document.createElement('canvas');cv.width=W;cv.height=H;const cx=cv.getContext('2d');

@@ -44,7 +44,7 @@ HP.db=(()=>{let dbp=null;
     save:(meta,plan,blobs)=>run(['hikes','plans','blobs'],'readwrite',t=>{t.objectStore('hikes').put(meta);if(plan)t.objectStore('plans').put(plan,meta.id);for(const[k,b]of Object.entries(blobs||{}))if(b)t.objectStore('blobs').put(b,meta.id+':'+k)}),
     putMeta:meta=>run('hikes','readwrite',t=>t.objectStore('hikes').put(meta)),
     putPlan:(id,plan)=>run('plans','readwrite',t=>t.objectStore('plans').put(plan,id)),
-    remove:id=>run(['hikes','plans','blobs'],'readwrite',t=>{t.objectStore('hikes').delete(id);t.objectStore('plans').delete(id);for(const k of['topo','relief'])t.objectStore('blobs').delete(id+':'+k)}),
+    remove:id=>run(['hikes','plans','blobs'],'readwrite',t=>{t.objectStore('hikes').delete(id);t.objectStore('plans').delete(id);for(const k of['topo','relief','sat','dem'])t.objectStore('blobs').delete(id+':'+k)}),
     putBlob:(k,b)=>run('blobs','readwrite',t=>t.objectStore('blobs').put(b,k)),
     delBlob:k=>run('blobs','readwrite',t=>t.objectStore('blobs').delete(k))
   }})();

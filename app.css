@@ -386,3 +386,12 @@ tr.tot td{font-weight:600;border-bottom:0}
 }
 @media(min-width:601px) and (max-width:1000px){.wpill{display:none}}
 @media(prefers-reduced-motion:reduce){.hint,.steps .pb>span,.tg,.tg::after,.top{transition:none}.steps li.work i{animation:none}.dbox{animation:none}}
+
+/* 3D view: satellite credit (required next to the picture) and the note while saved hikes get new pictures */
+.attrib{position:absolute;right:14px;bottom:112px;max-width:300px;text-align:right;font-size:0.6875rem;line-height:1.3;color:rgba(255,255,255,.94);text-shadow:0 1px 2px rgba(0,0,0,.6),0 0 6px rgba(0,0,0,.25)}
+.attrib a{color:inherit;text-decoration-color:rgba(255,255,255,.5)}
+.xpill{position:absolute;left:50%;top:14px;transform:translateX(-50%);background:rgba(16,30,24,.8);color:#fff;padding:6px 14px;border-radius:calc(var(--rk)*18px);font:600 0.875rem 'Barlow Semi Condensed',sans-serif;pointer-events:none;white-space:nowrap}
+@media(max-width:600px){
+  .attrib{right:10px;bottom:108px;max-width:200px;font-size:0.625rem}
+  .xpill{top:10px}.legend:not([hidden]):not([data-mode=day])~.xpill{top:50px}
+}

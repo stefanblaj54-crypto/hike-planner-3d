@@ -17,6 +17,6 @@ The app looks for a newer version every time it opens, or comes back to the scre
 
 ## Free services it uses
 
-No accounts or keys needed: [BRouter](https://brouter.de) for trail routing, OpenStreetMap through Overpass and Nominatim for huts, passes, water and place names, [OpenTopoMap](https://opentopomap.org) for the map, AWS Terrain Tiles for heights, and [Open-Meteo](https://open-meteo.com) for the forecast, the ECMWF ensemble and ERA5 climate records.
+No accounts or keys needed: [BRouter](https://brouter.de) for trail routing, OpenStreetMap through Overpass and Nominatim for huts, passes, water and place names, [OpenTopoMap](https://opentopomap.org) for the map, AWS Terrain Tiles for heights, [Open-Meteo](https://open-meteo.com) for the forecast, the ECMWF ensemble and ERA5 climate records, and satellite pictures from Sentinel-2 cloudless - [https://s2maps.eu](https://s2maps.eu) by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025).
 
 How the code is organised, how updates work and how to test a change: [CLAUDE.md](CLAUDE.md).
