@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='1.5.1';
+const VERSION='1.5.2';
 const SCREENS=['home','new','build','view','custom','about'];
 let cur='',viewId=null,building=null,installEvt=null;
 
@@ -103,7 +103,7 @@ const sampleCover=wide=>{const k=wide?'w':'t';return COV.get('sample:'+k)||COV.s
 const dropCovers=id=>['w','t'].forEach(k=>{const c=COV.get(id+':'+k);if(c){URL.revokeObjectURL(c.url);COV.delete(id+':'+k)}});
 // swisstopo pictures are used close up in and around Switzerland, so those pictures carry its credit too
 const inSwiss=c=>!!c&&c.lat>45.6&&c.lat<48.05&&c.lon>5.7&&c.lon<10.75;
-const SATCREDIT='Satellite picture: Sentinel-2 cloudless - <a href="https://s2maps.eu" target="_blank" rel="noopener">https://s2maps.eu</a> by <a href="https://eox.at" target="_blank" rel="noopener">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2025)';
+const SATCREDIT='Satellite picture: Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025)';
 function blobURL(root,b){const u=URL.createObjectURL(b);(root._urls||(root._urls=[])).push(u);return u}
 async function renderHero(root,model,{mini=false}={}){
   const P=LOOK.get(),pal=LOOK.pal();let bg=P.bg,ink=pal.bandInk,bgHTML='',skyStyle='',skyInner='';
@@ -126,7 +126,7 @@ async function renderHero(root,model,{mini=false}={}){
     (model.kind==='next'&&!mini?(bg==='3d'?(f=>f?`<div class="hwx">${f}</div>`:'')(fcHTML(model.m)):fcHTML(model.m)):'')+
     (!mini?`<div class="hcta"><button class="btn primary" data-act="${model.go[0]}">${model.go[1]}</button><button class="btn glass" data-act="${model.alt[0]}">${model.alt[0]==='new'?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>':''}${model.alt[1]}</button></div>`:'')+
     (bg==='3d'&&!mini&&model.kind!=='next'?`<p class="hcap">In the picture: ${cv.sample?`a sample hike, ${esc(SAMPLE.pic)}`:`your last hike, ${esc(latestMeta.name)}`}.</p>`:'')+
-    (bg==='3d'&&!mini?`<p class="hcred">${SATCREDIT}${cv.ch?' · Aerial pictures © <a href="https://www.swisstopo.admin.ch" target="_blank" rel="noopener">swisstopo</a>':''}</p>`:'')+`</div>`;
+    (bg==='3d'&&!mini?`<p class="hcred">${SATCREDIT}${cv.ch?' · Aerial pictures © swisstopo':''}</p>`:'')+`</div>`;
   return ink}
 let homeSeq=0;
 async function showHome(){show('home');await renderHome()}
@@ -148,7 +148,7 @@ async function renderList(up,past,list){const P=LOOK.get(),cards=P.list==='cards
   const tk=list.reduce((s,m)=>s+(+m.km||0),0),tu=list.reduce((s,m)=>s+(+m.up||0),0);
   $('#totals').textContent=P.totals&&list.length>1?`${list.length} hikes, ${fmtKm(tk)} km and ${nf.format(Math.round(tu/10)*10)} m of climbing in all.`:'';
   $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'');
-  const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © <a href="https://www.swisstopo.admin.ch" target="_blank" rel="noopener">swisstopo</a>':'')+'.':''}`}
+  const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © swisstopo':'')+'.':''}`}
 $('#hikes').addEventListener('click',e=>{const b=e.target.closest('.hike');if(b)go('#/hike/'+encodeURIComponent(b.dataset.id))});
 $('#hero').addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
   if(a==='open'&&nextMeta)go('#/hike/'+encodeURIComponent(nextMeta.id));else if(a==='new'||a==='draw'){go('#/new');setMode('draw')}else if(a==='import')startImport()});
@@ -246,7 +246,7 @@ function refreshNewMap(){if(typeof L==='undefined'){$('#pmap').innerHTML='<p cla
   if(!map)initMap();requestAnimationFrame(()=>map.invalidateSize())}
 function initMap(){let v={center:[46.6,15],zoom:5};try{const s=JSON.parse(localStorage.getItem('hp-view')||'null');if(s&&s.center)v=s}catch(e){}
   map=L.map('pmap',{zoomControl:false,doubleClickZoom:false,tapTolerance:18}).setView(v.center,v.zoom);if(!coarse)L.control.zoom({position:'bottomright'}).addTo(map);
-  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{subdomains:'abc',maxZoom:17,attribution:'© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM · <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA)'}).addTo(map);
+  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{subdomains:'abc',maxZoom:17,attribution:'© OpenStreetMap contributors, SRTM · map style © OpenTopoMap (CC-BY-SA)'}).addTo(map);map.attributionControl.setPrefix(false);
   lineLayer=L.layerGroup().addTo(map);wpLayer=L.layerGroup().addTo(map);locLayer=L.layerGroup().addTo(map);
   map.on('click',e=>{if(NEW.mode!=='draw')return;pushHist();NEW.pts.push({lat:e.latlng.lat,lon:e.latlng.lng});changed()});
   map.on('moveend',()=>{const c=map.getCenter();try{localStorage.setItem('hp-view',JSON.stringify({center:[+c.lat.toFixed(5),+c.lng.toFixed(5)],zoom:map.getZoom()}))}catch(e){}});
