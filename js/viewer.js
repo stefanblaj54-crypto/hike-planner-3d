@@ -5,6 +5,7 @@ const {$,$$,nf,fmtH,fmtClock,esc,sst,parseDay,isoDay,fmtDate}=HP.u;
 const DAYC=['#f76707','#7048e8','#1c7ed6','#0ca678','#e64980','#f59f00','#4263eb','#ae3ec9','#2b8a3e','#c92a2a'];
 const SACC={0:'#868e96',1:'#37b24d',2:'#f2b705',3:'#fd7e14',4:'#e03131',5:'#862e9c'};
 const SACN={0:'No grade (road, track or unmarked path)',1:'T1 hiking',2:'T2 mountain hiking',3:'T3 demanding, hands at times',4:'T4 alpine, exposed, chains',5:'T5 demanding alpine'};
+const SACS={0:'No grade',1:'T1 hiking',2:'T2 mountain',3:'T3 demanding',4:'T4 alpine',5:'T5 hard alpine'};   // short names for legends
 // steepness of the path in degrees, measured over about 200 m of the route
 const STC={1:'#37b24d',2:'#f2b705',3:'#fd7e14',4:'#e03131',5:'#862e9c'},STN={1:'Gentle, under 5°',2:'Moderate, 5–10°',3:'Steep, 10–15°',4:'Very steep, 15–20°',5:'Extreme, over 20°'};
 const MONN=['','January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -302,7 +303,7 @@ function renderDaylight(){const el=$('#dlcard'),days=S.day?[DAYS[S.day-1]]:DAYS,
 function renderZones(){const el=$('#zcard'),[a,b]=profRange(),km=[0,0,0,0,0,0],g=[0,0,0,0,0,0];let tot=0;
   for(let i=a;i<b;i++){const s=R.d[i+1]-R.d[i];km[STEEP[i]]+=s;g[R.sac[i]]+=s;tot+=s}
   let h=`<div class="ch"><h2 class="micro">Steepness</h2><span class="micro">${S.day?`day ${S.day}`:'all days'}</span></div><div class="zones">`+[1,2,3,4,5].map(z=>`<div class="zr" style="--c:${STC[z]}"><span class="zn">${STN[z].split(', ')[1]}</span><span class="zb"><i style="width:${(tot?km[z]/tot*100:0).toFixed(1)}%"></i></span><span class="zv">${km[z].toFixed(1)} km</span></div>`).join('')+'</div>';
-  if(D.sacKnown){const ks=[1,2,3,4,5,0].filter(k=>g[k]>.05);h+=`<div class="ch sub"><h3 class="micro">Path grade</h3></div><div class="pbar">${ks.map(k=>`<i style="--c:${SACC[k]};flex:${g[k]} 1 0"></i>`).join('')}</div><ul class="plist">${ks.map(k=>`<li><i style="--c:${SACC[k]}"></i><span>${k?SACN[k]:'No grade'}</span><b>${g[k].toFixed(1)} km</b></li>`).join('')}</ul>`}
+  if(D.sacKnown){const ks=[1,2,3,4,5,0].filter(k=>g[k]>.05);h+=`<div class="ch sub"><h3 class="micro">Path grade</h3></div><div class="pbar">${ks.map(k=>`<i style="--c:${SACC[k]};flex:${g[k]} 1 0"></i>`).join('')}</div><ul class="plist">${ks.map(k=>`<li title="${esc(SACN[k])}"><i style="--c:${SACC[k]}"></i><span>${SACS[k]}</span><b>${g[k].toFixed(1)} km</b></li>`).join('')}</ul>`}
   el.innerHTML=h}
 
 /* ---------- profile ---------- */

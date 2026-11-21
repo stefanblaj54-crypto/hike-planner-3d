@@ -162,6 +162,7 @@ async def mobile(p):
     await pg.screenshot(path=SHOTS + "m_view_table.png")
     print("M BRIEF:", (await pg.inner_text("#brief"))[:1800].replace("\n", " | "))
     print("M TABLE:", (await pg.inner_text("#tbl tbody")).replace("\n", " | ").replace("\t", " "))
+    print("CUT OFF LABELS:", await pg.evaluate("[...document.querySelectorAll('.plist li span,.rstats span,.kpis span')].filter(s=>s.offsetWidth&&s.scrollWidth>s.clientWidth+1).map(s=>s.textContent)") or "none")
     print("REQUESTS:", log)
     print("ERRORS:", "\n".join(errs[:30]) or "none")
     await b.close()
