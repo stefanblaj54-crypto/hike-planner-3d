@@ -32,10 +32,10 @@
 <section class="screen" id="scr-home" hidden>
   <div class="hero" id="hero"></div>
   <div class="list" id="listwrap">
-    <div class="listhead"><h2 id="listh">Your hikes</h2><p class="totals" id="totals"></p></div>
+    <div class="listhead"><h2 id="listh" class="micro">Your hikes</h2><p class="totals micro" id="totals"></p></div>
     <div id="hikes" class="hikes"></div>
     <div class="install" id="install" hidden></div>
-    <p class="foot" id="foot">Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.</p>
+    <p class="foot" id="foot">Stored on this phone only. Map data © OpenStreetMap contributors.</p>
   </div>
 </section>
 
@@ -58,17 +58,17 @@
     <p class="how" id="how"></p>
     <div class="filebox" id="filebox" hidden>
       <label class="btn"><input type="file" id="file" class="vh" accept=".gpx,.kml,.geojson,.json,application/gpx+xml,application/vnd.google-earth.kml+xml,application/geo+json,application/json">Choose a GPX, KML or GeoJSON file</label>
-      <p class="mute small">Export it from Komoot, AllTrails, Mapy.cz, Wikiloc, Outdooractive, Strava or a GPS watch, or save it from an email or website.</p>
+      <p class="mute small">From Komoot, AllTrails, Strava, a GPS watch or an email.</p>
       <button class="btn ghost small" id="reverse" type="button" hidden>Reverse direction</button>
     </div>
     <p class="stats" id="rstats" aria-live="polite"></p>
     <form class="details" id="details">
-      <label class="wide">Name <input id="hname" maxlength="80" placeholder="Leave empty to name it after the start and finish"></label>
-      <label>First day <input type="date" id="hdate" required></label>
-      <label>Days <select id="hdays"><option value="auto">Work it out for me</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></label>
-      <label>Start walking at <input type="time" id="hstart" value="07:00"></label>
-      <label>Pace <select id="hpace"><option value="0.7">Fast (Swiss signpost times)</option><option value="0.85">Fit</option><option value="1" selected>Average (DIN 33466)</option><option value="1.2">Heavy pack or relaxed</option></select></label>
-      <label class="check"><input type="checkbox" id="hbreaks" checked> 10 min rest per hour</label>
+      <label class="wide"><span class="micro">Name</span><input id="hname" maxlength="80" placeholder="Optional"></label>
+      <label><span class="micro">Date</span><input type="date" id="hdate" required></label>
+      <label><span class="micro">Days</span><select id="hdays"><option value="auto">Automatic</option><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option><option value="5">5</option><option value="6">6</option><option value="7">7</option><option value="8">8</option><option value="9">9</option><option value="10">10</option></select></label>
+      <label><span class="micro">Start</span><input type="time" id="hstart" value="07:00"></label>
+      <label><span class="micro">Pace</span><select id="hpace"><option value="0.7">Fast</option><option value="0.85">Fit</option><option value="1" selected>Average</option><option value="1.2">Heavy pack</option></select></label>
+      <label class="check" title="10 minutes' rest every hour"><input type="checkbox" id="hbreaks" checked> <span class="micro">Rests</span></label>
       <button class="btn primary wide" id="buildbtn" disabled>Build the 3D plan</button>
     </form>
   </div>
@@ -78,7 +78,7 @@
 <section class="screen" id="scr-build" hidden>
   <div class="band buildbox">
     <h2 id="bname">Building your plan</h2>
-    <p class="mute">This takes from a few seconds to about a minute, depending on the length of the route and the connection. Keep the app open.</p>
+    <p class="mute">Up to a minute. Keep the app open.</p>
     <ol class="steps" id="steps"></ol>
     <p class="err" id="berr" hidden></p>
     <div class="row2"><button class="btn primary" id="bagain" hidden>Try again</button><button class="btn ghost" id="bcancel">Cancel</button></div>
@@ -107,14 +107,18 @@
     </dl>
     <h3>Good to know</h3>
     <p><b>Likely weather.</b> Up to 15 days ahead, the chance of each weather type is the share of the 51 runs of the ECMWF forecast model that give it. Further ahead, it is how often each type happened at this place on these dates over the last 10 years (ERA5 weather records). Valley fog has no percentage, because both sources are too coarse to tell a foggy valley from the sunny ridge above it.</p>
-    <p>Times follow the DIN 33466 hiking formula, adjusted for your pace, rests and the weather. Heights come from satellite data, so summits can read a little low. The plan is a guide: on the ground, follow the waymarks, check the national weather service, and turn back when conditions change.</p>
+    <p><b>Times</b> use the DIN 33466 hiking formula (4 km/h on the flat, 300 m/h up, 500 m/h down; the larger plus half the smaller), scaled by your pace, with 10 minutes' rest an hour if you choose rests. Bad weather adds rough allowances: 4–20% on wet ground, 25–70% on snow, more on ice, about 10% in thick cloud or strong gusts.</p>
+    <p><b>Effort</b> is km-effort, as in trail running: each kilometre and each 100 m of climbing count 1. Under 15 is easy, 15–25 moderate, 25–35 hard, over 35 very hard. <b>Daylight</b> is the time left between your arrival and sunset on your tightest day: amber under an hour, red after dark.</p>
+    <p><b>Weather types</b> are typical patterns, timed against your walk, using temperature statistics for this place and height. The <b>forecast</b> uses Open-Meteo's hourly forecast at points along the route; it appears 16 days before your start and updates when you open the hike with a connection.</p>
+    <p><b>Difficulty</b> grades are OpenStreetMap's sac_scale tags (for routes drawn here); steepness is the slope of the path in degrees, averaged over about 200 m. Water points are springs and taps marked on OpenStreetMap; check that they run.</p>
+    <p>Heights come from satellite data, so summits can read a little low. The plan is a guide: on the ground, follow the waymarks, check the national weather service, and turn back when conditions change.</p>
     <p class="mute small" id="ver"></p>
   </div>
 </section>
 
 <!-- viewer -->
 <section class="screen" id="scr-view" hidden>
-  <div class="vhead"><ul class="figs" id="figs"></ul><span class="vh" id="vname"></span></div>
+  <div class="vhead"><ul class="kpis" id="figs"></ul><span class="vh" id="vname"></span></div>
   <div class="stagewrap">
     <section class="stage" id="stage" aria-label="3D map of the route">
       <canvas id="cv"></canvas>
@@ -137,42 +141,36 @@
     </div>
     <div class="readout" id="readout" aria-live="off"></div>
   </div>
-  <div class="wbar">
-    <h3>Weather</h3>
-    <div class="wchips" id="wchips" role="group" aria-label="Weather"></div>
-    <label id="monlab">Month <select id="mon"></select></label>
-    <button class="btn small ghost" id="fcbtn" hidden>Update forecast</button>
-  </div>
-  <div class="bar">
+  <!-- controls: the day, the plan and the weather -->
+  <div class="ctl">
     <div class="chips" id="chips" role="group" aria-label="Choose a day"></div>
     <div class="when">
-      <label>First day <input type="date" id="vdate"></label>
-      <label>Days <select id="ndays"></select></label>
-      <label>Start <input type="time" id="start" value="07:00"></label>
-      <label>Pace <select id="pace"><option value="0.7">Fast</option><option value="0.85">Fit</option><option value="1">Average</option><option value="1.2">Heavy pack</option></select></label>
-      <label><input type="checkbox" id="breaks"> 10 min rest per hour</label>
-      <button class="play" id="play">Walk day 1 ▶</button>
+      <label><span class="micro">Date</span><input type="date" id="vdate"></label>
+      <label><span class="micro">Days</span><select id="ndays"></select></label>
+      <label><span class="micro">Start</span><input type="time" id="start" value="07:00"></label>
+      <label><span class="micro">Pace</span><select id="pace"><option value="0.7">Fast</option><option value="0.85">Fit</option><option value="1">Average</option><option value="1.2">Heavy pack</option></select></label>
+      <label class="ck" title="10 minutes' rest every hour"><input type="checkbox" id="breaks"><span class="micro">Rests</span></label>
+      <button class="play" id="play">▶ Walk</button>
+    </div>
+    <div class="wbar">
+      <span class="micro">Weather</span>
+      <div class="wchips" id="wchips" role="group" aria-label="Weather"></div>
+      <label id="monlab"><span class="micro">Month</span><select id="mon"></select></label>
+      <button class="btn small ghost" id="fcbtn" hidden>Update forecast</button>
     </div>
   </div>
-  <section class="brief" id="brief" aria-live="polite"></section>
-  <section class="band">
-    <h2>Height profile</h2>
-    <p class="sub" id="profsub">Whole trip. Tap a day to zoom in; move along the profile to move the marker on the map.</p>
-    <div class="fig"><svg id="prof" role="img" aria-label="Elevation profile with the weather"></svg></div>
-    <div class="plegend" id="plegend"></div>
-  </section>
-  <section class="band" style="padding-top:0">
-    <h2>Day by day</h2>
-    <p class="sub">Arrival times use the start time, pace, rests and the weather above.</p>
-    <div class="scroll"><table class="stack" id="tbl"><thead><tr><th>Day</th><th>Route</th><th class="n">Distance</th><th class="n">Climb</th><th class="n">Descent</th><th class="n">Highest</th><th class="n">Walking</th><th class="n">Arrive</th><th>Likely weather</th></tr></thead><tbody></tbody></table></div>
-  </section>
-  <section class="band notes" style="padding-top:0">
-    <p><b>A plan, not a guarantee.</b> The line follows OpenStreetMap paths (or your file) and heights come from satellite terrain data, so summits and passes can read a little low. On the ground, follow the waymarks and signposts, and check the local rules for camping and huts.</p>
-    <p><b>Times</b> use the DIN 33466 hiking formula (4 km/h on the flat, 300 m/h up, 500 m/h down; the larger plus half the smaller), scaled by your pace. Bad weather adds rough allowances: 4–20% on wet ground, 25–70% on snow, more on ice, about 10% in thick cloud or strong gusts.</p>
-    <p><b>Weather types</b> are typical patterns, timed against your walk, using temperature statistics for this place and height. <b>Forecast</b> uses Open-Meteo's hourly forecast at points along the route; it appears 16 days before your start and updates when you open the hike with a connection. Before you go, also check the national weather service and its warnings. <span id="vsrc"></span></p>
-    <p><b>Difficulty</b> grades are OpenStreetMap's sac_scale tags (for routes drawn here); imported files show steepness instead: the slope of the path in degrees, averaged over about 200 m. Water points are springs and taps marked on OpenStreetMap; check that they run.</p>
-    <p>Map © <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, SRTM · map style © <a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA) · terrain: AWS Terrain Tiles (Mapzen) · routing: <a href="https://brouter.de">BRouter</a> · weather: <a href="https://open-meteo.com">Open-Meteo</a> (ERA5 and national weather models) · place search: Nominatim.</p>
-  </section>
+  <!-- the plan in numbers and charts; each fact is shown once -->
+  <div class="cards">
+    <section class="card" id="brief" aria-live="polite"></section>
+    <section class="card" id="wxcard"></section>
+    <section class="card wide"><div class="ch"><h2 class="micro">Profile</h2><span class="micro" id="profsub"></span></div>
+      <div class="fig"><svg id="prof" role="img" aria-label="Elevation profile with the weather"></svg></div><div class="plegend" id="plegend"></div></section>
+    <section class="card" id="dlcard"></section>
+    <section class="card" id="zcard"></section>
+    <section class="card wide"><div class="ch"><h2 class="micro">Days</h2></div>
+      <div class="scroll"><table class="tbl" id="tbl"><thead><tr><th>Day</th><th class="n">km</th><th class="n">Up</th><th class="n">Down</th><th class="n">Top</th><th class="n">Walking</th><th class="n">Effort</th></tr></thead><tbody></tbody></table></div></section>
+  </div>
+  <p class="vsrc"><span id="vsrc"></span> <a href="#/about">How it is worked out</a></p>
 </section>
 </main>
 

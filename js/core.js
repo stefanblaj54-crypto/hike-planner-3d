@@ -90,6 +90,14 @@ HP.download=(name,blob)=>{const a=document.createElement('a');a.href=URL.createO
 // time-zone offset in hours for a place's zone on a given day (falls back to longitude)
 HP.tzOffset=(tz,date,lon)=>{try{if(tz){const p=new Intl.DateTimeFormat('en-US',{timeZone:tz,timeZoneName:'shortOffset'}).formatToParts(date).find(x=>x.type==='timeZoneName');const m=/GMT([+-]\d{1,2})(?::(\d\d))?/.exec(p?p.value:'');if(m)return +m[1]+(m[2]?Math.sign(+m[1]||1)*(+m[2])/60:0);if(p&&p.value==='GMT')return 0}}catch(e){}
   const base=Math.round((lon||0)/15),mo=date.getMonth();return base+(mo>=3&&mo<=9?1:0)};
+// sunrise and sunset in local clock hours for a date (the same sun model as the 3D view; 0.83° below the horizon for refraction)
+HP.sunTimes=(lat,lon,date,tz)=>{const d=typeof date==='string'?HP.u.parseDay(date):date,off=HP.tzOffset(tz,d,lon),n=Math.round((d-new Date(d.getFullYear(),0,0))/864e5),
+  B=2*Math.PI*(n-81)/364,eot=9.87*Math.sin(2*B)-7.53*Math.cos(B)-1.5*Math.sin(B),dec=23.44*Math.PI/180*Math.sin(2*Math.PI*(284+n)/365),L=lat*Math.PI/180,
+  noon=12+off-lon/15-eot/60,c=(Math.sin(-.833*Math.PI/180)-Math.sin(L)*Math.sin(dec))/(Math.cos(L)*Math.cos(dec));
+  if(c>=1)return{rise:noon,set:noon,noon,dark:true};if(c<=-1)return{rise:0,set:24,noon,light:true};const h=Math.acos(c)*180/Math.PI/15;return{rise:noon-h,set:noon+h,noon}};
+// effort of a day as km-effort (ITRA): 1 km of distance or 100 m of climbing each count 1
+HP.effort=(km,up)=>km+up/100;
+HP.effortWord=e=>e<15?'easy':e<25?'moderate':e<35?'hard':'very hard';
 
 HP.toast=(msg,ms=3200)=>{const t=$('#toast');if(!t)return;t.textContent=msg;t.hidden=false;clearTimeout(t._h);t._h=setTimeout(()=>{t.hidden=true},ms)};
 })();

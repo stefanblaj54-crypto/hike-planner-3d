@@ -5,6 +5,7 @@ import test_app as T
 S=T.SHOTS
 PHONE=dict(viewport={"width":390,"height":844},device_scale_factor=2,is_mobile=True,has_touch=True)
 async def setlook(pg,look,hour=None,path="#/"):
+    look=dict({"lv":3},**look)   # a look from this version, so the theme asked for is not moved to Carbon
     await pg.evaluate(f"localStorage.setItem('hp-look',JSON.stringify({json.dumps(look)}))")
     global N; N=globals().get("N",0)+1
     q=(("&hour="+str(hour)) if hour is not None else "")+f"&n={N}"

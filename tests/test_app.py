@@ -85,7 +85,7 @@ async def desktop(p):
             await pg.mouse.move(box["x"] + 50 + (box["width"] - 64) * .3, box["y"] + box["height"] * .4); await pg.wait_for_timeout(300)
             await pg.evaluate("window.scrollTo(0,0)"); await pg.wait_for_timeout(2600)
             await pg.screenshot(path=SHOTS + f"d_view_{wx}.png")
-        print(f"WX {wx}: table walking:", (await pg.inner_text("#tbl tbody")).count("weather"), "| brief:", (await pg.inner_text("#brief"))[:300].replace("\n", " | "))
+        print(f"WX {wx}: days slowed by the weather:", await pg.locator("#tbl tbody td.n small").count(), "| brief:", (await pg.inner_text("#brief"))[:300].replace("\n", " | "))
     # change days, move a night, change date, export
     await pg.select_option("#ndays", "2"); await pg.wait_for_timeout(600)
     print("2 DAYS:", (await pg.inner_text("#tbl tbody")).replace("\n", " | ").replace("\t", " "))

@@ -5,15 +5,14 @@ import test_app as T, test_home as H
 S=T.SHOTS
 async def viewer_checks(pg,tag):
     print(tag,"CHIPS:",(await pg.inner_text("#wchips")).replace("\n"," "))
-    await pg.locator("#brief").scroll_into_view_if_needed(); await pg.wait_for_timeout(300)
-    print(tag,"LIKELY:",(await pg.inner_text(".likely")).replace("\n"," | "))
-    print(tag,"DAY LINES:",[t.replace("\n"," ") for t in await pg.locator(".dlikely p").all_inner_texts()])
-    print(tag,"TABLE LAST COL:",await pg.locator("#tbl tbody td[data-l='Likely weather']").all_inner_texts())
+    await pg.locator("#wxcard").scroll_into_view_if_needed(); await pg.wait_for_timeout(300)
+    print(tag,"LIKELY:",(await pg.inner_text("#wxcard")).replace("\n"," | "))
+    print(tag,"DAY BARS:",[await l.get_attribute("aria-label") for l in await pg.locator("#wxcard .wxd .pbar").all()])
     await pg.screenshot(path=S+f"p_{tag}_brief.png")
     await pg.click("[data-day='2']"); await pg.wait_for_timeout(1200)
     print(tag,"DAY 2 CHIPS:",(await pg.inner_text("#wchips")).replace("\n"," "))
-    await pg.locator("#brief").scroll_into_view_if_needed(); await pg.wait_for_timeout(300)
-    print(tag,"DAY 2 LIKELY:",(await pg.inner_text(".likely")).replace("\n"," | ")[:300])
+    await pg.locator("#wxcard").scroll_into_view_if_needed(); await pg.wait_for_timeout(300)
+    print(tag,"DAY 2 LIKELY:",(await pg.inner_text("#wxcard")).replace("\n"," | ")[:300])
     await pg.evaluate("window.scrollTo(0,0)"); await pg.wait_for_timeout(1500); await pg.screenshot(path=S+f"p_{tag}_top.png")
 async def main():
     async with async_playwright() as p:

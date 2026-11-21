@@ -145,7 +145,7 @@ function skyWord(c,i,t){const st=c.st,sn=sunAt(t,R.day[i]);let w;
   else w=(st.cu&&st.cu.cover>.2)||(st.cells&&st.cells.some(q=>q.I>.2))?'Sun, clouds building':st.windVis>.8?'Sunny, very clear air':'Sunny';
   if(c.inC&&c.pt&&!(c.thd!=null&&c.thd<3000))w+=c.fog?'':', in cloud';
   if(c.thd!=null&&c.thd>=3000&&c.thd<15000)w+=` · <span class="warn">thunder ${Math.round(c.thd/1000)} km away</span>`;return w}
-function trailWord(c){return c.trail==='wet'?'Path wet: rock, roots and wooden steps get slippery':c.trail==='snow'?'<span class="warn">Snow on the path</span>':c.trail==='icy'?'<span class="bad">Icy snow on the path</span>':''}
+function trailWord(c){return c.trail==='wet'?'Wet path, slippery':c.trail==='snow'?'<span class="warn">Snow on the path</span>':c.trail==='icy'?'<span class="bad">Icy snow on the path</span>':''}
 
 /* ---------- open and close ---------- */
 function close(){if(AC){AC.abort();AC=null}ROs.forEach(r=>r.disconnect());ROs=[];if(V3&&V3.dispose)V3.dispose();V3=null;window.V3=null;WXC.clear();tzCache.clear()}
@@ -177,7 +177,7 @@ function open(plan,blobs,cb){
   $('#chips').addEventListener('click',e=>{const b=e.target.closest('.chip');if(b)selectDay(+b.dataset.day,true)},sig);
   $('#readout').addEventListener('click',e=>{const b=e.target.closest('[data-night]');if(b)moveNight(S.i)},sig);
   $('#fcbtn').addEventListener('click',()=>updateForecast(true),sig);
-  $('#play').textContent='Walk day 1 ▶';$('#profsub').textContent='Whole trip. Tap a day to zoom in; move along the profile to move the marker on the map.';$('#hint').style.opacity='';
+  $('#play').textContent='▶ Walk';$('#profsub').textContent='All days';$('#hint').style.opacity='';
   refreshTimes();
   const ro=new ResizeObserver(()=>drawProfile());ro.observe($('#prof'));ROs.push(ro);
   setupProfile(sig);
@@ -197,7 +197,8 @@ function renderWxChips(){const fw=HP.forecastWindow(D.date),ok=fcUsable(),L=like
   let keys=Object.keys(SCN);if(pc){const sc=keys.filter(k=>k in pc).sort((a,b)=>pc[b]-pc[a]);keys=['fc','plain',...sc,...keys.filter(k=>!(k in pc)&&k!=='fc'&&k!=='plain')]}
   $('#wchips').innerHTML=keys.map(k=>{const s=SCN[k],dis=k==='fc'&&!ok,ttl=dis?(fw.ok?'The forecast is loading or could not be downloaded':fw.days>15?`The forecast appears 16 days before your start (in ${fw.days-15} days)`:'This date has passed'):'';
     const p=pc&&k in pc?`<span class="pc">${pc[k]}%</span>`:'';
-    return`<button class="wchip${k==='fc'?' fc':''}" data-wx="${k}" aria-pressed="${k===S.wx}" aria-disabled="${dis}" title="${esc(ttl)}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[s.icon]}</svg>${s.name}${p}</button>`}).join('');
+    let tip=ttl;if(!dis)try{tip=DESC[k](MONN[S.mon]).replace(/<[^>]+>/g,'')}catch(e){}
+    return`<button class="wchip${k==='fc'?' fc':''}" data-wx="${k}" aria-pressed="${k===S.wx}" aria-disabled="${dis}" title="${esc(tip)}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[s.icon]}</svg>${s.name}${p}</button>`}).join('');
   $('#monlab').hidden=S.wx==='fc';$('#fcbtn').hidden=!fw.ok}
 let fcBusy=false;
 async function updateForecast(manual){const fw=HP.forecastWindow(D.date);if(!fw.ok){if(manual)HP.toast(fw.days>15?'The forecast appears 16 days before your start date.':'This date has passed.');return}
@@ -207,7 +208,7 @@ async function updateForecast(manual){const fw=HP.forecastWindow(D.date);if(!fw.
     if(manual||S.wx==='fair')S.wx='fc';WXC.clear();renderWxChips();refreshTimes();save();if(manual)HP.toast('Forecast updated')}
   catch(e){if(manual)HP.toast('Could not update the forecast: '+e.message)}finally{fcBusy=false;b.disabled=false;b.textContent='Update forecast'}}
 function resetDays(){DAYS=D.days;overnight={};const DC=HP.look?HP.look.routeColors():DAYC;DAYS.forEach((d,k)=>{d.color=DC[k%DC.length];if(k<DAYS.length-1)overnight[d.i1]=d.n});if(S.day>DAYS.length)S.day=0;
-  $('#chips').innerHTML=`<button class="chip" data-day="0" aria-pressed="${!S.day}">All days</button>`+DAYS.map(d=>`<button class="chip" data-day="${d.n}" style="--c:${d.color}" aria-pressed="${S.day===d.n}"><i></i>Day ${d.n} <small>${esc(d.from)} → ${esc(d.to)}</small></button>`).join('');
+  $('#chips').innerHTML=`<button class="chip" data-day="0" aria-pressed="${!S.day}">All</button>`+DAYS.map(d=>`<button class="chip" data-day="${d.n}" style="--c:${d.color}" aria-pressed="${S.day===d.n}" title="${esc(d.from)} → ${esc(d.to)}"><i></i>Day ${d.n}</button>`).join('');
   $('#ndays').value=String(DAYS.length);if(V3&&V3.relabel)V3.relabel()}
 function moveNight(i){if(DAYS.length<2||i<0)return;const ends=DAYS.slice(0,-1).map(d=>d.i1);let k=0,bd=1e9;ends.forEach((e,j)=>{const dd=Math.abs(e-i);if(dd<bd){bd=dd;k=j}});
   const lo=k?ends[k-1]+30:30,hi=k<ends.length-1?ends[k+1]-30:N-31;ends[k]=Math.max(lo,Math.min(hi,i));HP.splitDays(D,DAYS.length,ends);resetDays();refreshTimes();if(V3)V3.dayChanged(false);save();HP.toast(`Night ${k+1} moved`)}
@@ -216,34 +217,34 @@ const topWx=d=>{const L=HP.wxDay(D,d.n-1);if(!L||!L.pct)return'';const k=HP.WXK.
 function refreshTimes(){
   computeTimes();
   const km=R.d[N-1],up=DAYS.reduce((s,d)=>s+d.up,0),hrs=DAYS.reduce((s,d)=>s+WALK[d.i1],0);
-  $('#figs').innerHTML=`<li><b>${DAYS.length}</b>day${DAYS.length>1?'s':''}</li><li><b>${km.toFixed(km<20?1:0)}</b>km</li><li><b>${nf.format(Math.round(up/10)*10)}</b>m of climbing</li><li><b>${fmtH(hrs).replace(' 00','')}</b>walking</li>`;
+  $('#figs').innerHTML=[[DAYS.length,DAYS.length>1?'days':'day'],[km.toFixed(km<20?1:0),'km'],[nf.format(Math.round(up/10)*10),'m up'],[fmtH(hrs).replace(' 00',''),'walking']].map(([v,l])=>`<li><b>${v}</b><span>${l}</span></li>`).join('');
   const hi=d=>{let m=d.max;PTS.forEach(p=>{if(R.day[p.i]===d.n&&OFFICIAL[p.name])m=Math.max(m,OFFICIAL[p.name])});return m};
-  let tk=0,tu=0,td=0,th=0;
-  $('#tbl tbody').innerHTML=DAYS.map(d=>{const w=WALK[d.i1],x=w-BASEW[d.i1];tk+=d.km;tu+=d.up;td+=d.down;th+=w;
-    return `<tr><td data-l="Day"><span class="dot" style="--c:${d.color}"></span>Day ${d.n}${S.wx==='fc'?` <small class="mute">${fmtDate(isoDay(dayDate(d.n)))}</small>`:''}</td><td data-l="Route">${esc(d.from)} → ${esc(d.to)}</td><td class="n" data-l="Distance">${d.km.toFixed(1)} km</td><td class="n" data-l="Climb">${nf.format(d.up)} m</td><td class="n" data-l="Descent">${nf.format(d.down)} m</td><td class="n" data-l="Highest">${nf.format(hi(d))} m</td><td class="n" data-l="Walking">${fmtH(w)}${w>8?'<span class="long">long</span>':''}${x>4/60?`<br><small class="mute">+${fmtH(x)} for the weather</small>`:''}</td><td class="n" data-l="Arrive">${fmtClock(CLK[d.i1])}</td><td data-l="Likely weather">${topWx(d)}</td></tr>`}).join('')+
-    (DAYS.length>1?`<tr class="tot"><td data-l="">Total</td><td></td><td class="n" data-l="Distance">${tk.toFixed(1)} km</td><td class="n" data-l="Climb">${nf.format(tu)} m</td><td class="n" data-l="Descent">${nf.format(td)} m</td><td class="n"></td><td class="n" data-l="Walking">${fmtH(th)}</td><td class="n"></td><td></td></tr>`:'');
-  $('#vsrc').textContent=`Temperatures: ${D.clim.src}${D.clim.z?`, worked out for ${nf.format(D.clim.z[0])}–${nf.format(D.clim.z[1])} m`:''}.${D.fc?` Forecast: Open-Meteo, issued ${new Date(D.fc.issued).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}.`:''}`;
-  updateReadout();drawProfile();renderBrief();if(V3)V3.times();
+  // the table: each day's numbers, and its effort (km-effort) as a number and a bar
+  let tk=0,tu=0,td=0,th=0;const emax=Math.max(40,...DAYS.map(d=>HP.effort(d.km,d.up)));
+  $('#tbl tbody').innerHTML=DAYS.map(d=>{const w=WALK[d.i1],x=w-BASEW[d.i1],e=HP.effort(d.km,d.up);tk+=d.km;tu+=d.up;td+=d.down;th+=w;
+    return `<tr><td><span class="dot" style="--c:${d.color}"></span>Day ${d.n}<small>${esc(d.from)} → ${esc(d.to)}</small></td><td class="n">${d.km.toFixed(1)}</td><td class="n">${nf.format(d.up)}</td><td class="n">${nf.format(d.down)}</td><td class="n">${nf.format(hi(d))}</td><td class="n"${w>8?` style="color:var(--${w>10?'bad':'fair'})" title="A long day: over ${w>10?10:8} hours of walking"`:''}>${fmtH(w)}${x>4/60?`<small title="Extra time for the weather">+${fmtH(x)}</small>`:''}</td><td class="n eff"><b>${Math.round(e)}</b><i style="width:${(e/emax*100).toFixed(0)}%"></i></td></tr>`}).join('')+
+    (DAYS.length>1?`<tr class="tot"><td>Total</td><td class="n">${tk.toFixed(1)}</td><td class="n">${nf.format(tu)}</td><td class="n">${nf.format(td)}</td><td class="n"></td><td class="n">${fmtH(th)}</td><td class="n"><b>${Math.round(HP.effort(tk,tu))}</b></td></tr>`:'');
+  $('#vsrc').textContent=`Temperatures: ${D.clim.src}.${D.fc?` Forecast: Open-Meteo, ${new Date(D.fc.issued).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}.`:''}`;
+  updateReadout();drawProfile();renderBrief();renderCards();if(V3)V3.times();
 }
 function selectDay(n,fly){
   S.day=n;$$('.chip').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.day===n)));
-  $('#profsub').textContent=n?`Day ${n}: ${DAYS[n-1].from} → ${DAYS[n-1].to}. Distances count from the day's start.`:'Whole trip. Tap a day to zoom in; move along the profile to move the marker on the map.';
-  $('#play').textContent=`Walk day ${n||1} ▶`;
-  drawProfile();renderBrief();renderWxChips();if(V3)V3.dayChanged(fly);
+  $('#profsub').textContent=n?`Day ${n}`:'All days';
+  drawProfile();renderBrief();renderCards();renderWxChips();if(V3)V3.dayChanged(fly);
   if(n&&(S.i<0||R.day[S.i]!==n))setIndex(DAYS[n-1].i0)}
 function setIndex(i){S.i=i;updateReadout();updateCursor();if(V3)V3.mark()}
 function updateReadout(){
-  const el=$('#readout');if(S.i<0||!R){el.innerHTML=`<strong>${matchMedia('(hover: none)').matches?'Tap the route line or drag along the profile':'Hover the route line or the profile'}</strong><span class="mute">You'll see the day, the height, your walking time so far, roughly what time you get there and the weather at that moment.</span>`;return}
+  const el=$('#readout');el.classList.toggle('empty',S.i<0||!R);if(S.i<0||!R){el.innerHTML=`<p class="rempty micro">${matchMedia('(hover: none)').matches?'Tap the line or the profile':'Point at the line or the profile'}</p>`;return}
   const i=S.i,d=dayOf(i),km=R.d[i]-R.d[d.i0],at=PTS.find(p=>Math.abs(p.i-i)<=3),nx=PTS.find(p=>p.i>i+3&&R.day[p.i]===d.n&&p.kind!=='high'),ele=Math.round(R.e[i]),c=cond(i,CLK[i]),plain=S.wx==='plain';
   TAGT=plain?'':` · ${tt(c.T)}`;const gust=c.g>c.v*1.25?`, gusts ${Math.round(c.g/5)*5}`:'',tw=plain?'':trailWord(c);
-  const sd=Math.round(SLOPE[i]),slope=sd<1?'flat here':`${sd}° ${R.e[Math.min(N-1,i+5)]>=R.e[Math.max(0,i-5)]?'uphill':'downhill'} here`;
-  const grade=D.sacKnown?`<i style="--c:${SACC[R.sac[i]]}"></i>${SACN[R.sac[i]]}, ${slope}`:`<i style="--c:${STC[STEEP[i]]}"></i>${STN[STEEP[i]].split(',')[0]}: ${slope}`;
-  const night=DAYS.length>1&&!overnight[i]?`<button class="mini" data-night>Move the nearest night here</button>`:'';
-  el.innerHTML=`<strong>Day ${d.n} · ${esc(d.from)} → ${esc(d.to)}</strong>`+(at?`<div>${at.kind==='start'?'Start':at.kind==='end'?'Finish':'At'} <b>${esc(at.name)}</b>${OFFICIAL[at.name]?` (${nf.format(OFFICIAL[at.name])} m on the map)`:''}</div>`:'')+
-   `<div class="big">${nf.format(ele)} m · ${km.toFixed(1)} km into the day</div><div>${fmtH(walk(i))} walking → about <b>${fmtClock(clock(i))}</b>${S.wx==='fc'?` <span class="mute">${fmtDate(isoDay(dayDate(d.n)))}</span>`:''}</div>`+
-   (nx?`<div class="mute">Next: ${esc(nx.name)} in ${fmtH(walk(nx.i)-walk(i))}</div>`:`<div class="mute">End of the day</div>`)+`<div class="mute grade">${grade}</div>`+
-   (plain?`<div class="wxr"><span class="t">${tt(c.T)}</span> <span class="mute">on an average ${MONN[S.mon]} day</span></div>`:
-   `<div class="wxr"><span class="t">${tt(c.T)}</span>${c.feels<c.T-1.5?` <span class="mute">feels like ${tt(c.feels)}</span>`:''} · wind ${Math.round(c.v)} km/h${gust} from the ${DIRS[Math.round(c.dir/45)%8]}<div>${skyWord(c,i,CLK[i])}</div>${tw?`<div>${tw}</div>`:''}</div>`)+night}
+  const sd=Math.round(SLOPE[i]),up=R.e[Math.min(N-1,i+5)]>=R.e[Math.max(0,i-5)],gc=D.sacKnown?SACC[R.sac[i]]:STC[STEEP[i]];
+  const night=DAYS.length>1&&!overnight[i]?`<button class="mini" data-night>Move the night here</button>`:'';
+  el.innerHTML=`<p class="rh micro" style="--c:${d.color}"><i></i>Day ${d.n}${at?` · ${esc(at.name)}`:''}${S.wx==='fc'?` · ${fmtDate(isoDay(dayDate(d.n)))}`:''}</p>`+
+   `<div class="rbig"><b>${nf.format(ele)}</b><span>m</span></div>`+
+   `<ul class="rstats"><li><b>${km.toFixed(1)}</b><span>km</span></li><li><b>${fmtClock(clock(i))}</b><span>time</span></li><li><b>${fmtH(walk(i)).replace(/ (min|h)/,'<small> $1</small>')}</b><span>walked</span></li>`+
+   `<li><b style="color:${gc}">${sd<1?'0°':`${sd}° ${up?'↑':'↓'}`}</b><span>${D.sacKnown&&R.sac[i]?SACN[R.sac[i]].split(' ')[0]:'slope'}</span></li><li><b>${deg(c.T)}</b><span>${plain?'average':c.feels<c.T-1.5?`feels ${deg(c.feels)}`:'air'}</span></li></ul>`+
+   `<p class="rn">${nx?`Next: ${esc(nx.name)} · ${fmtH(walk(nx.i)-walk(i))}`:'End of the day'}</p>`+
+   (plain?'':`<p class="rw">${skyWord(c,i,CLK[i])} · wind ${Math.round(c.v)} km/h ${DIRS[Math.round(c.dir/45)%8]}${gust}${tw?` · ${tw}`:''}</p>`)+night}
 
 /* ---------- briefing ---------- */
 function placeName(i){const d=dayOf(i);let best=null,bd=1.2;for(const p of PTS){if(p.kind==='high')continue;if(R.day[p.i]!==d.n&&p.i!==d.i0-1)continue;const dd=Math.abs(R.d[p.i]-R.d[i]);if(dd<bd){bd=dd;best=p}}return best?best.name:`km ${(R.d[i]-R.d[d.i0]).toFixed(1)}`}
@@ -254,45 +255,55 @@ function dayBrief(d){
   for(let i=d.i0;i<=d.i1;i++){const c=cond(i,CLK[i]),seg=i<d.i1?R.d[i+1]-R.d[i]:0;if(c.st.nofc)nofc++;
     if(!cold||c.feels<cold.f)cold={f:c.feels,T:c.T,i};if(!hot||c.T>hot.T)hot={T:c.T,i};if(!gust||c.g>gust.g)gust={g:c.g,i};
     if(c.inC)cloudKm+=seg;if(c.trail==='wet')wetKm+=seg;if(c.trail==='snow'||c.trail==='icy')snowKm+=seg;if(c.thd!=null&&c.thd<8000&&(!th||c.thd<th.d-2000))th={i,d:c.thd}}
-  const passes=PTS.filter(p=>R.day[p.i]===d.n&&p.kind==='pass').map(p=>p.name),pl=passes.join(' and ')||'';
-  const L=[],hz=(k,t)=>L.push(`<div class="hz ${k}"><span>${t}</span></div>`),x=WALK[d.i1]-BASEW[d.i1];
-  if(S.wx==='fc'&&nofc>(d.i1-d.i0)/2)hz('info',`No forecast for ${fmtDate(isoDay(dayDate(d.n)))} yet; the numbers below use an average day.`);
-  hz('info',`Start ${fmtClock(CLK[d.i0])}, arrive about <b>${fmtClock(CLK[d.i1])}</b> · ${fmtH(WALK[d.i1])} walking${x>4/60?` (${fmtH(x)} more than in dry weather)`:''}.`);
-  hz('info',`Warmest ${tt(hot.T)} at ${esc(placeName(hot.i))} (${fmtClock(CLK[hot.i])}); coldest ${tt(cold.T)}${cold.f<cold.T-1.5?`, feels like ${tt(cold.f)} in the wind,`:''} at ${esc(placeName(cold.i))} (${fmtClock(CLK[cold.i])}).`);
+  const passes=PTS.filter(p=>R.day[p.i]===d.n&&p.kind==='pass').map(p=>p.name),pl=passes.join(', ')||'';
+  const L=[],hz=(k,t)=>L.push(`<li class="al ${k}">${t}</li>`);
+  if(S.wx==='fc'&&nofc>(d.i1-d.i0)/2)hz('info',`No forecast for ${fmtDate(isoDay(dayDate(d.n)))} yet: an average day.`);
   if(!plain){
     const on=S.wx==='storm'||S.wx==='fc'?stormOnset(d):99;
     if(on<30){let iex=-1;for(let i=d.i0;i<=d.i1;i++)if(highNear(i))iex=i;const arr=CLK[d.i1];
-      if(iex>=0){const tEx=CLK[iex];if(tEx>on-.5){const rec=Math.floor((startH()-(tEx-(on-.75)))*4)/4;hz('bad',`You'd still be on high ground at ${esc(placeName(iex))} around ${fmtClock(tEx)}, when storms ${S.wx==='fc'?'are forecast':'usually start'} (from about ${fmtClock(on)}). ${rec>=4.5?`Start by <b>${fmtClock(rec)}</b> to be over it in time.`:'Even a very early start does not get you over it in time: shorten the day or wait for a stable forecast.'}`)}else hz('ok',`Over the high ground by ${fmtClock(tEx)}, ahead of the storms (from about ${fmtClock(on)}).`)}
-      if(arr>on-.25&&!(iex>=0&&CLK[iex]>on-.5)){const rec=Math.floor((startH()-(arr-(on-.5)))*4)/4;hz('warn',`You'd arrive at ${esc(d.to)} around ${fmtClock(arr)}, just as storms start nearby. ${rec>=4.5?`Start by <b>${fmtClock(rec)}</b> to be in before them.`:'Shorten the day or wait for a stable forecast.'}`)}
-      if(th)hz(th.d<3000?'bad':'warn',`Lightning ${th.d<1500?'overhead':`about ${Math.round(th.d/1000)} km away`} near ${esc(placeName(th.i))} around ${fmtClock(CLK[th.i])}. Get off ridges, summits and fixed cables.`)}
-    if(snowKm>.2)hz('bad',`Snow or ice on about ${snowKm.toFixed(1)} km of path${pl?`, including ${esc(pl)}`:''}. Steep or exposed sections are not beginner terrain like this: wait for it to melt, or choose a lower route.`);
-    else if(wetKm>.5)hz('warn',`Wet path for about ${wetKm.toFixed(1)} km${pl?`; rock and steps on ${esc(pl)} get slippery`:''}. Poles help.`);
-    if(cloudKm>.3)hz('warn',`In cloud for about ${cloudKm.toFixed(1)} km: 50–100 m visibility. Follow the waymarks from one to the next and keep the route on your phone.`);
-    if(gust.g>60)hz(gust.g>85?'bad':'warn',`Gusts around ${Math.round(gust.g/5)*5} km/h at ${esc(placeName(gust.i))}: hard to keep your balance on exposed sections.`);
-    if(cold.f<2)hz('warn',`Feels like ${tt(cold.f)} at ${esc(placeName(cold.i))}: hat and gloves.`);
-    if(hot.T>26)hz('warn',`${tt(hot.T)} at ${esc(placeName(hot.i))} around ${fmtClock(CLK[hot.i])}: carry at least 2 litres and start early.`);
-    if(S.wx==='sea'){const c0=cond(d.i0,CLK[d.i0]);if(c0.fog)hz('ok',`You start in the fog at ${esc(placeName(d.i0))} (${tt(c0.T)}) and climb out into sunshine above about ${nf.format(Math.round(c0.st.fog.top/50)*50)} m.`)}
-    if(L.length<=2)hz('ok',S.wx==='fair'?'Good conditions. Afternoon cumulus over the high ground is normal; pack the waterproof anyway.':'No particular weather problems on this day.')}
+      if(iex>=0){const tEx=CLK[iex];if(tEx>on-.5){const rec=Math.floor((startH()-(tEx-(on-.75)))*4)/4;hz('bad',`Storms from about ${fmtClock(on)}, you're on high ground at ${esc(placeName(iex))} until ${fmtClock(tEx)}. ${rec>=4.5?`Start by <b>${fmtClock(rec)}</b>.`:'Shorten the day or wait for a stable forecast.'}`)}else hz('ok',`Over the high ground by ${fmtClock(tEx)}, before the storms (about ${fmtClock(on)}).`)}
+      if(arr>on-.25&&!(iex>=0&&CLK[iex]>on-.5)){const rec=Math.floor((startH()-(arr-(on-.5)))*4)/4;hz('warn',`You arrive at ${fmtClock(arr)} as storms start. ${rec>=4.5?`Start by <b>${fmtClock(rec)}</b>.`:'Shorten the day or wait for a stable forecast.'}`)}
+      if(th)hz(th.d<3000?'bad':'warn',`Lightning ${th.d<1500?'overhead':`${Math.round(th.d/1000)} km away`} at ${esc(placeName(th.i))} around ${fmtClock(CLK[th.i])}: off ridges and cables.`)}
+    if(snowKm>.2)hz('bad',`Snow or ice on ${snowKm.toFixed(1)} km${pl?`, ${esc(pl)}`:''}. Not beginner terrain like this.`);
+    else if(wetKm>.5)hz('warn',`Wet, slippery path for ${wetKm.toFixed(1)} km${pl?`, ${esc(pl)}`:''}. Poles help.`);
+    if(cloudKm>.3)hz('warn',`In cloud for ${cloudKm.toFixed(1)} km: follow the waymarks.`);
+    if(gust.g>60)hz(gust.g>85?'bad':'warn',`Gusts ${Math.round(gust.g/5)*5} km/h at ${esc(placeName(gust.i))}.`);
+    if(cold.f<2)hz('warn',`Feels ${tt(cold.f)} at ${esc(placeName(cold.i))}: hat and gloves.`);
+    if(hot.T>26)hz('warn',`${tt(hot.T)} at ${esc(placeName(hot.i))}: 2 litres of water, start early.`);
+    if(S.wx==='sea'){const c0=cond(d.i0,CLK[d.i0]);if(c0.fog)hz('ok',`Fog at the start, sunshine above ${nf.format(Math.round(c0.st.fog.top/50)*50)} m.`)}
+    if(!L.length)hz('ok','No weather problems on this day.')}
   const wq=(D.water||[]).filter(i=>i>=d.i0&&i<=d.i1).map(i=>R.d[i]-R.d[d.i0]).filter((v,k,a)=>!k||v-a[k-1]>.5);
-  hz('info',wq.length?`Water marked on OpenStreetMap near the path at ${wq.slice(0,8).map(v=>'km '+v.toFixed(1)).join(', ')}${wq.length>8?'…':''}. Check that springs run before relying on them.`:'No springs or taps are marked on OpenStreetMap along this day: carry all your water.');
+  hz('water',wq.length?`Water at km ${wq.slice(0,8).map(v=>v.toFixed(1)).join(' · ')}${wq.length>8?' …':''}`:'No water on the way: carry it all.');
   const f=cold.f,wetD=S.wx!=='storm'&&wetKm>.5,snowD=snowKm>.2&&S.wx==='snow',ex=[];
-  const wear=snowD?'merino long sleeve and fleece, waterproof over them in the wind, waterproof trousers or gaiters for the snow':wetD?'merino long sleeve under the waterproof jacket, rain trousers':f>=12?'T-shirt':f>=5?'T-shirt or merino long sleeve; fleece on at the high points and on breaks':f>=0?'merino long sleeve; fleece and waterproof on the high ground':'merino long sleeve and fleece, waterproof over them in the wind';
-  if(!wetD&&!snowD)ex.push(f>=12?'a fleece for breaks, waterproof jacket':'waterproof jacket');if(S.wx==='storm'||(S.wx==='fc'&&th))ex.push('rain trousers at the top of the pack');if(f<5)ex.push('hat and gloves');if(f<0)ex.push('a warm jacket for stops');if(wetD)ex.push('a pack liner and dry spare layers');if(hot.T>24)ex.push('2 litres or more of water and a sun hat');
-  return `<div class="bday" style="--c:${d.color}"><h3>Day ${d.n} · ${esc(d.from)} → ${esc(d.to)}${S.wx==='fc'?` <span class="mute">${fmtDate(isoDay(dayDate(d.n)))}</span>`:''}</h3>${dayLikely(d)}${L.join('')}<div class="kit"><b>Walk in:</b> ${wear}. <b>Carry:</b> ${ex.join(', ')}.</div></div>`}
+  const wear=snowD?'merino, fleece, waterproofs, gaiters':wetD?'merino under the waterproof, rain trousers':f>=12?'T-shirt':f>=5?'T-shirt or merino, fleece at the top':f>=0?'merino, fleece and waterproof on top':'merino and fleece, waterproof over them';
+  if(!wetD&&!snowD)ex.push(f>=12?'fleece, waterproof':'waterproof');if(S.wx==='storm'||(S.wx==='fc'&&th))ex.push('rain trousers');if(f<5)ex.push('hat, gloves');if(f<0)ex.push('warm jacket');if(wetD)ex.push('pack liner, dry layers');if(hot.T>24)ex.push('2 l water, sun hat');
+  return `<div class="bday" style="--c:${d.color}"><h3 class="micro"><i></i>Day ${d.n} · ${esc(d.from)} → ${esc(d.to)}</h3><ul class="alerts">${L.join('')}</ul><dl class="kit"><dt class="micro">Wear</dt><dd>${wear}</dd>${ex.length?`<dt class="micro">Carry</dt><dd>${ex.join(', ')}</dd>`:''}</dl></div>`}
 const pbar=(pc,lbl)=>{const ks=HP.WXK.filter(k=>pc[k]>0).sort((a,b)=>pc[b]-pc[a]);return`<div class="pbar" role="img" aria-label="${esc(lbl+': '+ks.map(k=>HP.WXT[k].name+' '+pc[k]+'%').join(', '))}">${ks.map(k=>`<i style="--c:${HP.WXT[k].c};flex:${pc[k]} 1 0"></i>`).join('')}</div>`};
-const hikeDay=n=>{const d=parseDay(D.date);d.setDate(d.getDate()+n-1);return isoDay(d)};
-function likelyHTML(){const L=likely(),one=!!S.day||DAYS.length===1,when=S.day?fmtDate(hikeDay(S.day),{weekday:'long',day:'numeric',month:'long'}):DAYS.length>1?`average of your ${DAYS.length} days`:fmtDate(D.date,{weekday:'long',day:'numeric',month:'long'});
-  if(!L||!L.pct)return`<div class="likely"><h3>Likely weather</h3><p class="src">Not known yet: the weather records for this place could not be downloaded. Open the hike with a connection to try again.</p></div>`;
-  const pc=L.pct,ks=HP.WXK.filter(k=>pc[k]>0).sort((a,b)=>pc[b]-pc[a]),src=L.src,yrs=D.clim&&D.clim.years?`${D.clim.years[0]} to ${D.clim.years[1]}`:'recent years';
-  const iss=D.ens?new Date(D.ens.issued).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'';
-  const t=src==='ens'?`From the ${D.ens.members} runs of the ECMWF forecast model, issued ${iss}: each type's share of the runs is its chance.`:
-    src==='mix'?`The first days come from the ${D.ens.members} runs of the ECMWF forecast model (issued ${iss}); the later days from how often each type happened here, ${yrs}.`:
-    `How often each type happened here from ${yrs} (ERA5 weather records), 15 days either side of ${one?'this date':'these dates'}. Not a forecast: the real forecast appears 16 days before the start.`;
-  return`<div class="likely"><h3>Likely weather <small>${esc(when)}</small></h3>${pbar(pc,'Likely weather')}<ul class="plist">${ks.map(k=>`<li><i style="--c:${HP.WXT[k].c}"></i><span>${HP.WXT[k].name}</span><b>${pc[k]}%</b></li>`).join('')}</ul><p class="src">${t} Valley fog has no percentage: these data are too coarse to tell a foggy valley from the sunny ridge above it.</p></div>`}
-const dayLikely=d=>{const L=HP.wxDay(D,d.n-1);if(!L||!L.pct)return'';const ks=HP.WXK.filter(k=>L.pct[k]>0).sort((a,b)=>L.pct[b]-L.pct[a]);
-  return`<div class="dlikely">${pbar(L.pct,'Likely weather on day '+d.n)}<p>${L.src==='ens'?'Forecast runs':'Usually at this time of year'}: ${ks.map(k=>`${HP.WXT[k].name} ${L.pct[k]}%`).join(', ')}</p></div>`};
-function renderBrief(){if(!R)return;const sc=SCN[S.wx],m=MONN[S.mon];
-  $('#brief').innerHTML=`<div>${likelyHTML()}<h2>${S.wx==='plain'?`An average ${m} day`:S.wx==='fc'?'Forecast':sc.name} <small>${S.wx==='fc'?esc(fmtDate(D.date,{day:'numeric',month:'long'})):m}</small></h2><p>${DESC[S.wx](m)}</p><p class="mute">${S.wx==='fc'?'Switch to a weather type to see how the same days would go in other conditions.':`These are typical patterns for ${m}, not a forecast. Change the start time to see how it moves the day against the weather.`}</p></div><div>${(S.day?[DAYS[S.day-1]]:DAYS).map(dayBrief).join('')}</div>`}
+const hikeDate=n=>{const d=parseDay(D.date);d.setDate(d.getDate()+n-1);return d};
+function renderBrief(){if(!R)return;const sc=SCN[S.wx];
+  $('#brief').innerHTML=`<div class="ch"><h2 class="micro">${S.wx==='plain'?'Plain map':S.wx==='fc'?'Forecast':esc(sc.name)}</h2><span class="micro">${S.wx==='fc'||S.wx==='plain'?'':MONN[S.mon]}</span></div>${(S.day?[DAYS[S.day-1]]:DAYS).map(dayBrief).join('')}`}
+/* ---------- the cards: weather by day, daylight, steepness ---------- */
+const deg=v=>`${Math.round(v)}°`.replace('-','−');
+function tempRange(d){let lo=1e9,hi=-1e9;for(let i=d.i0;i<=d.i1;i+=3){const T=cond(i,CLK[i]).T;lo=Math.min(lo,T);hi=Math.max(hi,T)}return`${deg(hi)} / ${deg(lo)}`}
+function renderCards(){if(!R)return;renderWxCard();renderDaylight();renderZones()}
+function renderWxCard(){const el=$('#wxcard'),L=likely(),pc=L&&L.pct,days=S.day?[DAYS[S.day-1]]:DAYS;
+  const src=!L?'':L.src==='ens'?`${D.ens.members} forecast runs`:L.src==='mix'?'forecast runs and records':`records ${D.clim&&D.clim.years?D.clim.years.join('–'):''}`;
+  let h=`<div class="ch"><h2 class="micro">Weather chance</h2><span class="micro">${esc(src)}</span></div>`;
+  if(!pc){el.innerHTML=h+`<p class="mute small">Not known yet: open the hike with a connection.</p>`;return}
+  h+=`<div class="wxdays">${days.map(d=>{const Ld=HP.wxDay(D,d.n-1);return`<div class="wxd"><span class="dn" style="--c:${d.color}"><i></i>${d.n}</span>${Ld&&Ld.pct?pbar(Ld.pct,'Day '+d.n):'<span class="pbar"></span>'}<span class="tr">${tempRange(d)}</span></div>`}).join('')}</div>`;
+  const ks=HP.WXK.filter(k=>pc[k]>0).sort((a,b)=>pc[b]-pc[a]);
+  el.innerHTML=h+`<ul class="plist">${ks.map(k=>`<li title="${esc(HP.WXT[k].name)}"><i style="--c:${HP.WXT[k].c}"></i><span>${HP.WXT[k].short}</span><b>${pc[k]}%</b></li>`).join('')}</ul>`}
+// each day from 04:00 to 22:00: daylight, the hours you walk, and the time left before sunset
+function renderDaylight(){const el=$('#dlcard'),days=S.day?[DAYS[S.day-1]]:DAYS,H0=4,H1=22,X=h=>((Math.min(H1,Math.max(H0,h))-H0)/(H1-H0)*100).toFixed(2);
+  const rows=days.map(d=>{const st=HP.sunTimes(D.center.lat,D.center.lon,hikeDate(d.n),D.tz),a=CLK[d.i0],b=CLK[d.i1],m=st.set-b,c=m>=1?'var(--good)':m>=0?'var(--fair)':'var(--bad)';
+    return`<div class="dlr"><span class="dn" style="--c:${d.color}"><i></i>${d.n}</span><div class="dlt"><i class="sky" style="left:${X(st.rise)}%;width:${X(st.set)-X(st.rise)}%"></i><i class="walk" style="left:${X(a)}%;width:${Math.max(1,Math.min(X(b),X(st.set))-X(a))}%;--c:${d.color}"></i>${b>st.set?`<i class="walk dark" style="left:${X(Math.max(a,st.set))}%;width:${Math.max(1,X(b)-X(Math.max(a,st.set)))}%"></i>`:''}<i class="set" style="left:${X(st.set)}%"></i></div><span class="mg" style="color:${c}">${m<0?'−':'+'}${fmtH(Math.abs(m))}</span>
+      <span class="dlx"><span style="left:${X(st.rise)}%">☀ ${fmtClock(st.rise)}</span><span style="left:${X(st.set)}%">${fmtClock(st.set)}</span></span><span class="arr micro">in ${fmtClock(b)}</span></div>`}).join('');
+  el.innerHTML=`<div class="ch"><h2 class="micro">Daylight</h2><span class="micro">left at arrival</span></div><div class="dlrows">${rows}</div>`}
+function renderZones(){const el=$('#zcard'),[a,b]=profRange(),km=[0,0,0,0,0,0],g=[0,0,0,0,0,0];let tot=0;
+  for(let i=a;i<b;i++){const s=R.d[i+1]-R.d[i];km[STEEP[i]]+=s;g[R.sac[i]]+=s;tot+=s}
+  let h=`<div class="ch"><h2 class="micro">Steepness</h2><span class="micro">${S.day?`day ${S.day}`:'all days'}</span></div><div class="zones">`+[1,2,3,4,5].map(z=>`<div class="zr" style="--c:${STC[z]}"><span class="zn">${STN[z].split(', ')[1]}</span><span class="zb"><i style="width:${(tot?km[z]/tot*100:0).toFixed(1)}%"></i></span><span class="zv">${km[z].toFixed(1)} km</span></div>`).join('')+'</div>';
+  if(D.sacKnown){const ks=[1,2,3,4,5,0].filter(k=>g[k]>.05);h+=`<div class="ch sub"><h3 class="micro">Path grade</h3></div><div class="pbar">${ks.map(k=>`<i style="--c:${SACC[k]};flex:${g[k]} 1 0"></i>`).join('')}</div><ul class="plist">${ks.map(k=>`<li><i style="--c:${SACC[k]}"></i><span>${k?SACN[k]:'No grade'}</span><b>${g[k].toFixed(1)} km</b></li>`).join('')}</ul>`}
+  el.innerHTML=h}
 
 /* ---------- profile ---------- */
 const SKYC={sun:['#f2c641','Sun'],cu:['#ead58b','Sun and cloud'],shade:['#b8ae8e','Mountain shade'],grey:['#a9b2b8','Grey, overcast'],cloud:['#d9dee2','In cloud or fog'],rain:['#4d8fd4','Rain'],snow:['#b7d3f0','Snow or sleet'],storm:['#7b4fc9','Thunderstorm'],night:['#28344d','Dark'],none:['#e6e8e4','No forecast']};
@@ -321,9 +332,11 @@ function drawProfile(){const prof=$('#prof');
     let r0=null;cs.forEach((q,k)=>{const st=q.c.thd!=null&&q.c.thd<8000;if(st&&r0===null)r0=q.x;if((!st||k===cs.length-1)&&r0!==null){const r1=st?q.x+3:q.x;s+=`<rect x="${r0}" y="${m.t}" width="${Math.max(3,r1-r0)}" height="${H-m.t-m.b}" fill="#7b4fc9" fill-opacity=".13"/>`;if(r1-r0>40)s+=`<text class="wl" x="${r0+4}" y="${m.t+12}">storms</text>`;r0=null}});
     if(cs.some(q=>q.c.thd!=null&&q.c.thd<8000))items.push(['#7b4fc9','Storm within 8 km']);
     items.forEach(([c,t])=>leg+=`<span><i style="--c:${c}"></i>${t}</span>`)}
+  // each day's area fades from its colour at the line to nothing at the bottom
+  s+='<defs>'+DAYS.map(d=>`<linearGradient id="pg${d.n}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${d.color}" stop-opacity=".45"/><stop offset="1" stop-color="${d.color}" stop-opacity=".03"/></linearGradient>`).join('')+'</defs>';
   DAYS.forEach(d=>{const i0=Math.max(a,d.i0),i1=Math.min(b,d.i1);if(i0>=i1)return;
     let q='';for(let i=i0;i<i1;i+=step)q+=(q?'L':'M')+X(R.d[i]).toFixed(1)+','+Y(R.e[i]).toFixed(1);q+='L'+X(R.d[i1]).toFixed(1)+','+Y(R.e[i1]).toFixed(1);
-    s+=`<path d="${q}L${X(R.d[i1]).toFixed(1)},${Y(lo)}L${X(R.d[i0]).toFixed(1)},${Y(lo)}Z" fill="${d.color}" fill-opacity=".2" style="cursor:${S.day?'crosshair':'pointer'}"/><path d="${q}" fill="none" stroke="${d.color}" stroke-width="2.2" pointer-events="none"/>`;
+    s+=`<path d="${q}L${X(R.d[i1]).toFixed(1)},${Y(lo)}L${X(R.d[i0]).toFixed(1)},${Y(lo)}Z" fill="url(#pg${d.n})" style="cursor:${S.day?'crosshair':'pointer'}"/><path d="${q}" fill="none" stroke="${d.color}" stroke-width="2.4" stroke-linejoin="round" pointer-events="none"/>`;
     if(!S.day&&DAYS.length>1)s+=`<text class="dl" x="${(X(R.d[d.i0])+X(R.d[d.i1]))/2}" y="${m.t-8}" text-anchor="middle">${narrow?'D':'Day '}${d.n}</text>`});
   const rel=S.day?x0:0,kspan=x1-x0,kt=kspan>80?(narrow?40:20):kspan>40?(narrow?20:10):kspan>12?(narrow?5:2):kspan>4?1:.5;
   for(let v=Math.ceil((x0-rel)/kt)*kt;v<=x1-rel+1e-9;v+=kt)s+=`<text class="ax" x="${X(v+rel)}" y="${H-7}" text-anchor="middle">${+v.toFixed(1)}${v===0||narrow?'':' km'}</text>`;
@@ -608,8 +621,8 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     if(b.dataset.ex){const k=+b.dataset.ex/S.ex,oldY=controls.target.y;S.ex=+b.dataset.ex;group.scale.y=S.ex;controls.target.y*=k;camera.position.y+=controls.target.y-oldY;WXV.ex();doBake()}
     syncTools();save()},sig);
   $('#reset').addEventListener('click',()=>flyTo(frameDay()),sig);
-  const stopPlay=()=>{playing=null;$('#play').textContent=`Walk day ${S.day||1} ▶`};
-  $('#play').addEventListener('click',()=>{if(playing){stopPlay();return}if(!S.day)selectDay(1,true);const d=DAYS[S.day-1];playing={d,t0:performance.now()+(reduce?0:900),dur:Math.max(8,R.t[d.i1]*2.4)*1000};$('#play').textContent='Pause ❚❚';hideHint()},sig);
+  const stopPlay=()=>{playing=null;$('#play').textContent='▶ Walk'};
+  $('#play').addEventListener('click',()=>{if(playing){stopPlay();return}if(!S.day)selectDay(1,true);const d=DAYS[S.day-1];playing={d,t0:performance.now()+(reduce?0:900),dur:Math.max(8,R.t[d.i1]*2.4)*1000};$('#play').textContent='❚❚ Pause';hideHint()},sig);
   const tag=$('#tag'),north=$('#north');
   const place=()=>{const r={w:stage.clientWidth,h:stage.clientHeight};
     if(S.i>=0){const p=P(S.i),dist=camera.position.distanceTo(p),s=dist*.0055;marker.position.copy(p);halo.position.copy(p);marker.scale.setScalar(s);halo.scale.setScalar(s);marker.visible=halo.visible=true;

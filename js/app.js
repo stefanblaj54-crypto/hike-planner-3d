@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='1.5.2';
+const VERSION='1.6';
 const SCREENS=['home','new','build','view','custom','about'];
 let cur='',viewId=null,building=null,installEvt=null;
 
@@ -48,22 +48,29 @@ const SAMPLE={prof:[2039,2037,2067,2106,2156,2200,2271,2295,2322,2300,2276,2252,
   pin:{fr:.99,e:2544,name:'Vârful Moldoveanu'},cap:'The Făgăraș ridge from Bâlea Lac',pic:'the Bärentrek in the Bernese Oberland'};
 const fmtKm=k=>{k=+k||0;return k<20?k.toFixed(1):nf.format(Math.round(k))};
 const daysTo=s=>Math.round((parseDay(s)-parseDay(isoDay(new Date())))/864e5);
-function greeting(){const h=new Date().getHours(),n=(LOOK.get().name||'').trim();return(h>=5&&h<12?'Good morning':h>=12&&h<18?'Good afternoon':'Good evening')+(n?`, ${n}`:'')+'.'}
-function fmtRange(a,b){const A=parseDay(a),B=parseDay(b||a),o=(d,x)=>d.toLocaleDateString('en-GB',x);
-  if(!b||a===b)return o(A,{weekday:'long',day:'numeric',month:'long'});
-  if(A.getMonth()===B.getMonth())return`${o(A,{weekday:'short'})} ${A.getDate()} to ${o(B,{weekday:'short'})} ${B.getDate()} ${o(B,{month:'long'})}`;
-  return`${o(A,{weekday:'short',day:'numeric',month:'short'})} to ${o(B,{weekday:'short',day:'numeric',month:'short'})}`}
+function fmtRange(a,b){const A=parseDay(a),B=parseDay(b||a),wd=d=>d.toLocaleDateString('en-GB',{weekday:'short'}),mo=d=>d.toLocaleDateString('en-GB',{month:'short'});
+  if(!b||a===b)return`${wd(A)} ${A.getDate()} ${mo(A)}`;
+  return A.getMonth()===B.getMonth()?`${wd(A)} ${A.getDate()} – ${wd(B)} ${B.getDate()} ${mo(B)}`:`${wd(A)} ${A.getDate()} ${mo(A)} – ${wd(B)} ${B.getDate()} ${mo(B)}`}
 let nextMeta=null,latestMeta=null,lastList=[],hasPhoto=false;const fcFail=new Set();
-function heroModel(next,count){const g=greeting();
+// the three dials of the next hike: the chance of fair weather, the effort of the hardest day, the daylight left on the tightest day
+const hmm=h=>`${Math.floor(h)}:${String(Math.round((h%1)*60)).padStart(2,'0')}`.replace(/(\d+):60/,(x,a)=>`${+a+1}:00`);
+function ringsOf(m){const R=[],pf=m.wx&&m.wx.pct?m.wx.pct.fair||0:null;
+  R.push(pf==null?{v:0,c:'var(--line)',val:'–',label:'Fair weather',aria:'Fair weather not known yet'}:{v:pf/100,c:pf>=55?'var(--good)':pf>=30?'var(--fair)':'var(--bad)',val:`${pf}<i>%</i>`,label:'Fair weather',aria:`Fair weather ${pf}%`});
+  if(m.eff!=null)R.push({v:Math.min(1,m.eff/45),c:'var(--eff)',val:Math.round(m.eff),unit:HP.effortWord(m.eff),label:'Effort',aria:`Effort ${Math.round(m.eff)}, ${HP.effortWord(m.eff)}`});
+  if(m.dl!=null){const x=m.dl;R.push({v:x<0?1:Math.max(.02,Math.min(1,x/5)),c:x>=1?'var(--good)':x>=0?'var(--fair)':'var(--bad)',val:(x<0?'−':'')+hmm(Math.abs(x)),unit:x<0?'after dark':'h spare',label:'Daylight',aria:x<0?`Arrive ${hmm(-x)} after dark`:`${hmm(x)} of daylight to spare`})}
+  return R}
+function heroModel(next,count){
   if(next){const n=daysTo(next.date),e=daysTo(next.end||next.date);
-    const when=n>1?`Your next hike starts in ${n} days.`:n===1?'Your next hike starts tomorrow.':n===0?'Your hike starts today.':e>=0?`Today is day ${1-n} of this hike.`:'';
-    return{kind:'next',m:next,greet:`${g} ${when}`,title:next.name,dates:fmtRange(next.date,next.end),
-      nums:[[fmtKm(next.km),'km'],[nf.format(next.up),'m of climbing'],[next.days,next.days>1?'days':'day']],
-      stats:[[`${fmtKm(next.km)} km`,'distance'],[`${nf.format(next.up)} m`,'climbing'],[String(next.days),next.days>1?'days':'day'],...(next.hi?[[`${nf.format(next.hi)} m`,'highest point']]:[])],
+    const when=n>1?`In ${n} days`:n===1?'Tomorrow':n===0?'Today':e>=0?`Day ${1-n}`:'';
+    return{kind:'next',m:next,meta:[when,fmtRange(next.date,next.end),`${next.days} ${next.days>1?'days':'day'}`].filter(Boolean).join(' · '),title:next.name,
+      rings:ringsOf(next),stats:[[fmtKm(next.km),'km'],[nf.format(next.up),'m up'],...(next.hi?[[nf.format(next.hi),'m top']]:[])],
+      nums:[[fmtKm(next.km),'km'],[nf.format(next.up),'m up'],[next.days,next.days>1?'days':'day']],
       prof:next.prof||SAMPLE.prof,pin:next.prof?{fr:next.hiFr,e:next.hi,name:next.hiName}:null,nights:next.nights||[],go:['open','Open in 3D'],alt:['new','New hike']}}
-  return{kind:count?'more':'first',greet:g,title:count?'Where to next?':'Plan your first hike',
-    text:count?'Draw a new route on the map or import a GPX file. Your earlier hikes are below.':'Draw a route on the map or import a GPX file. You get a 3D model of the hike with walking times, overnight stops and the weather for your days.',
+  return{kind:count?'more':'first',meta:'',title:count?'Where to next?':'Plan your first hike',
+    text:'Draw a route on the map or import a GPX file.',
     prof:SAMPLE.prof,pin:SAMPLE.pin,cap:SAMPLE.cap,nights:[],go:['draw','Draw a route'],alt:['import','Import a GPX file']}}
+const ring=r=>{const C=2*Math.PI*44,len=Math.max(0,Math.min(1,r.v))*C;
+  return`<div class="ring" role="img" aria-label="${esc(r.aria)}" style="--c:${r.c}"><div class="rd"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="trk" cx="50" cy="50" r="44"/><circle class="arc" cx="50" cy="50" r="44" stroke-dasharray="${len.toFixed(1)} ${C.toFixed(1)}"/></svg><div class="rv"><b>${r.val}</b>${r.unit?`<small>${esc(r.unit)}</small>`:''}</div></div><span class="micro">${esc(r.label)}</span></div>`};
 function skyParts(model,mini){
   const pal=LOOK.pal(),sky=LOOK.sky();let h='';
   if(sky.night)h+=LOOK.stars(11);
@@ -81,17 +88,13 @@ function skyParts(model,mini){
   return{html:h,bg:`linear-gradient(180deg,${sky.top} 0%,${sky.hor} 100%)`,ink:sky.ink}}
 const mbar=pc=>{const ks=HP.WXK.filter(k=>pc[k]>0).sort((a,b)=>pc[b]-pc[a]);return`<span class="mbar" aria-hidden="true">${ks.map(k=>`<i style="background:${HP.WXT[k].c};flex:${pc[k]} 1 0"></i>`).join('')}</span>`};
 const topK=pc=>HP.WXK.reduce((a,b)=>pc[b]>pc[a]?b:a);
-function fcHTML(m){const w=HP.forecastWindow(m.date),wx=m.wx,deg=v=>`${Math.round(v)}°`.replace('-','−'),dayWx=d=>wx&&wx.days?wx.days.find(x=>x.d===d):null;
+function fcHTML(m){const w=HP.forecastWindow(m.date),wx=m.wx,dayWx=d=>wx&&wx.days?wx.days.find(x=>x.d===d):null;
   if(m.fcd&&m.fcd.length)return`<div class="hfc${m.fcd.length<=4?' fit':''}" role="list" aria-label="Forecast for the hike" style="--n:${m.fcd.length}">${m.fcd.map(d=>{const x=dayWx(d.d),ens=x&&x.src==='ens'&&x.pct,k=ens?topK(x.pct):null;
-      return`<div class="fcd" role="listitem"><svg viewBox="0 0 24 24" aria-hidden="true">${LOOK.ICONS[k?HP.WXT[k].ic:d.ic]||LOOK.ICONS.cloud}</svg><b>${esc(fmtDate(d.d,{weekday:'short',day:'numeric'}))}</b>${k?`<span class="lk">${HP.WXT[k].short} ${x.pct[k]}%</span>`:''}<span>${deg(d.tx)} / ${deg(d.tn)}</span>${d.pr>=1?`<span>${Math.round(d.pr)} mm</span>`:''}${ens?mbar(x.pct):''}</div>`}).join('')}</div>`+
-    (wx&&wx.src!=='clim'?`<p class="fcnote">Percentages are the share of 51 forecast runs that give that weather. Open the hike for every type.</p>`:'');
-  const fd=parseDay(m.date);fd.setDate(fd.getDate()-15);const when=fd.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
-  if(wx&&wx.pct&&w.days>14){const ks=HP.WXK.filter(k=>wx.pct[k]>0).sort((a,b)=>wx.pct[b]-wx.pct[a]);
-    return`<div class="hlikely"><p class="hlt">Usual weather on these dates</p>${mbar(wx.pct)}<ul>${ks.map(k=>`<li><i style="background:${HP.WXT[k].c}"></i>${HP.WXT[k].name} <b>${wx.pct[k]}%</b></li>`).join('')}</ul>
-      <p class="fcnote">How often each happened here${m.years?` from ${m.years[0]} to ${m.years[1]}`:''}. ${w.days>15?`The forecast for your days appears on ${esc(when)}.`:''}</p></div>`}
-  if(w.days>15)return`<p class="fcnote">The forecast for these days appears on ${esc(when)}.</p>`;
-  if(w.ok)return`<p class="fcnote">${fcFail.has(m.id)?'The forecast could not be loaded. Open the hike to try again.':navigator.onLine?'Getting the forecast…':'The forecast loads when you are online.'}</p>`;
+      return`<div class="fcd" role="listitem"><span class="micro">${esc(fmtDate(d.d,{weekday:'short',day:'numeric'}))}</span><svg viewBox="0 0 24 24" aria-hidden="true">${LOOK.ICONS[k?HP.WXT[k].ic:d.ic]||LOOK.ICONS.cloud}</svg>${k?`<b>${x.pct[k]}%</b><span>${HP.WXT[k].short}</span>`:''}<span class="tmp">${degS(d.tx)} / ${degS(d.tn)}</span>${d.pr>=1?`<span class="mm">${Math.round(d.pr)} mm</span>`:''}${ens?mbar(x.pct):''}</div>`}).join('')}</div>`;
+  if(w.days>15){const fd=parseDay(m.date);fd.setDate(fd.getDate()-15);return`<p class="fcwhen micro">Forecast from ${esc(fd.toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}))}</p>`}
+  if(w.ok)return`<p class="fcwhen micro">${fcFail.has(m.id)?'Forecast unavailable':navigator.onLine?'Getting the forecast…':'Forecast loads when online'}</p>`;
   return''}
+const degS=v=>`${Math.round(v)}°`.replace('-','−');
 /* the 3D pictures of the hikes (saved by the 3D view as <id>:cover) and the sample picture for an empty list */
 const COV=new Map(),SAMPLE_PIC={w:'img/sample-wide.jpg',t:'img/sample-tall.jpg'},wideHero=()=>innerWidth>=900;
 const inkOf=url=>new Promise(ok=>{const im=new Image();im.onload=()=>{try{const c=document.createElement('canvas');c.width=12;c.height=16;const x=c.getContext('2d');x.drawImage(im,0,0,12,16);
@@ -119,13 +122,13 @@ async function renderHero(root,model,{mini=false}={}){
   if(bg==='contours')bgHTML='<div class="lines"></div>';
   if(bg==='skyline'){const s=skyParts(model,mini);skyInner=s.html;skyStyle=`background:${s.bg}`;ink=s.ink}
   root.dataset.bg=bg;
-  const nums=bg==='3d'&&model.stats&&!mini?`<div class="hstats" style="--n:${model.stats.length}">${model.stats.map(([v,u])=>`<div><b>${v}</b><span>${u}</span></div>`).join('')}</div>`:
-    model.nums?`<div class="hnums">${model.nums.map(([v,u])=>`<div><b>${v}</b><span>${u}</span></div>`).join('')}</div>`:'';
+  const kp=list=>`<ul class="kpis">${list.map(([v,u])=>`<li><b>${v}</b><span>${u}</span></li>`).join('')}</ul>`;
   root.innerHTML=`<div class="hero-bg" aria-hidden="true">${bgHTML}</div><div class="hero-sky" style="${skyStyle}">${skyInner}</div><div class="hero-body">`+
-    `<p class="greet">${esc(model.greet)}</p><h2 class="htitle">${esc(model.title)}</h2>`+(model.dates&&!mini?`<p class="hdates">${esc(model.dates)}</p>`:'')+(model.text&&!mini?`<p class="hdates htext">${esc(model.text)}</p>`:'')+nums+
-    (model.kind==='next'&&!mini?(bg==='3d'?(f=>f?`<div class="hwx">${f}</div>`:'')(fcHTML(model.m)):fcHTML(model.m)):'')+
-    (!mini?`<div class="hcta"><button class="btn primary" data-act="${model.go[0]}">${model.go[1]}</button><button class="btn glass" data-act="${model.alt[0]}">${model.alt[0]==='new'?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>':''}${model.alt[1]}</button></div>`:'')+
-    (bg==='3d'&&!mini&&model.kind!=='next'?`<p class="hcap">In the picture: ${cv.sample?`a sample hike, ${esc(SAMPLE.pic)}`:`your last hike, ${esc(latestMeta.name)}`}.</p>`:'')+
+    (model.meta?`<p class="hmeta micro">${esc(model.meta)}</p>`:'')+`<h2 class="htitle">${esc(model.title)}</h2>`+(model.text&&!mini?`<p class="htext">${esc(model.text)}</p>`:'')+
+    (mini?(model.nums?kp(model.nums):''):(model.rings?`<div class="rings">${model.rings.map(ring).join('')}</div>`:'')+(model.stats?kp(model.stats):''))+
+    (model.kind==='next'&&!mini?(f=>f?`<div class="hwx">${f}</div>`:'')(fcHTML(model.m)):'')+
+    (!mini?`<div class="hcta"><button class="btn primary" data-act="${model.go[0]}">${model.go[1]}</button>${model.alt[0]==='new'?`<button class="btn glass round" data-act="new" aria-label="${model.alt[1]}" title="${model.alt[1]}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>`:`<button class="btn glass" data-act="${model.alt[0]}">${model.alt[1]}</button>`}</div>`:'')+
+    (bg==='3d'&&!mini&&model.kind!=='next'?`<p class="hcap">${cv.sample?`Sample: ${esc(SAMPLE.pic)}`:`Last hike: ${esc(latestMeta.name)}`}</p>`:'')+
     (bg==='3d'&&!mini?`<p class="hcred">${SATCREDIT}${cv.ch?' · Aerial pictures © swisstopo':''}</p>`:'')+`</div>`;
   return ink}
 let homeSeq=0;
@@ -137,18 +140,18 @@ async function renderHome(){const seq=++homeSeq,{list,up,past,next,latest}=await
   if(seq!==homeSeq)return;lastList=list;nextMeta=next;latestMeta=latest;
   const ink=await renderHero($('#hero'),heroModel(nextMeta,list.length));if(seq!==homeSeq)return;
   document.body.style.setProperty('--sky-ink',ink);headerState();await renderList(up,past,list);if(seq!==homeSeq)return;installHint();
-  const miss=list.filter(m=>m.v!==3);if(miss.length)backfill(miss).then(ch=>{if(ch&&cur==='home')renderHome()});
+  const miss=list.filter(m=>m.v!==4);if(miss.length)backfill(miss).then(ch=>{if(ch&&cur==='home')renderHome()});
   else if(nextMeta)refreshForecast(nextMeta).then(ch=>{if(ch&&cur==='home')renderHome()})}
 function spark(p){if(!p||p.length<2)return'';const lo=Math.min(...p),hi=Math.max(...p),r=Math.max(hi-lo,250),n=p.length,pt=p.map((e,i)=>`${(i/(n-1)*100).toFixed(1)},${(22.5-(e-lo)/r*19).toFixed(1)}`).join('L');
   return`<svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path d="M0,24L${pt}L100,24Z" fill="currentColor" fill-opacity=".16" stroke="none"/><path d="M${pt}" stroke="currentColor" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`}
 async function renderList(up,past,list){const P=LOOK.get(),cards=P.list==='cards',pics={};
   if(cards)for(const m of list){const c=await coverOf(m,true);if(c)pics[m.id]=c}
-  const row=(m,old)=>`<button class="hike${old?' past':''}" data-id="${esc(m.id)}">${pics[m.id]?`<img class="th cov" src="${pics[m.id].url}" alt="">`:m.thumb?`<img class="th" src="${m.thumb}" alt="">`:'<span class="th"></span>'}<span class="nm">${esc(m.name)}</span><span class="dt">${esc(fmtDate(m.date,{weekday:'short',day:'numeric',month:'short',year:'numeric'}))}, ${m.days} ${m.days>1?'days':'day'}</span><span class="pf">${spark(m.prof)}<span>${fmtKm(m.km)} km</span><span>${nf.format(m.up)} m up</span></span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>`;
+  const row=(m,old)=>`<button class="hike${old?' past':''}" data-id="${esc(m.id)}">${pics[m.id]?`<img class="th cov" src="${pics[m.id].url}" alt="">`:m.thumb?`<img class="th" src="${m.thumb}" alt="">`:'<span class="th"></span>'}<span class="nm">${esc(m.name)}</span><span class="dt micro">${esc(fmtDate(m.date,{weekday:'short',day:'numeric',month:'short',year:'numeric'}))} · ${m.days} ${m.days>1?'days':'day'}</span><span class="pf">${spark(m.prof)}<span>${fmtKm(m.km)} km</span><span>${nf.format(m.up)} m up</span></span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>`;
   $('#listwrap').querySelector('.listhead').hidden=!list.length;
   const tk=list.reduce((s,m)=>s+(+m.km||0),0),tu=list.reduce((s,m)=>s+(+m.up||0),0);
-  $('#totals').textContent=P.totals&&list.length>1?`${list.length} hikes, ${fmtKm(tk)} km and ${nf.format(Math.round(tu/10)*10)} m of climbing in all.`:'';
-  $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'');
-  const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © swisstopo':'')+'.':''}`}
+  $('#totals').textContent=P.totals&&list.length>1?`${list.length} hikes · ${fmtKm(tk)} km · ${nf.format(Math.round(tu/10)*10)} m up`:'';
+  $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h micro">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'');
+  const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Stored on this phone only. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © swisstopo':'')+'.':''}`}
 $('#hikes').addEventListener('click',e=>{const b=e.target.closest('.hike');if(b)go('#/hike/'+encodeURIComponent(b.dataset.id))});
 $('#hero').addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
   if(a==='open'&&nextMeta)go('#/hike/'+encodeURIComponent(nextMeta.id));else if(a==='new'||a==='draw'){go('#/new');setMode('draw')}else if(a==='import')startImport()});
@@ -165,9 +168,9 @@ async function refreshClim(m){if(fcBusy.has(m.id))return false;fcBusy.add(m.id);
     await HP.db.putPlan(m.id,D);const mm=await HP.db.meta(m.id);if(mm)await HP.db.putMeta(Object.assign(mm,metaOf(D,mm.thumb)));return true}
   catch(e){fcFail.add(m.id);return false}finally{fcBusy.delete(m.id)}}
 function installHint(){const el=$('#install');if(standalone()){el.hidden=true;return}el.hidden=false;
-  el.innerHTML=installEvt?`<b>Install the app</b> to open it from your home screen, full screen and without a connection. <button class="btn small" id="instbtn">Install</button>`:
-    isIOS?`<b>Put it on your home screen:</b> in Safari, tap the Share button, then <b>Add to Home Screen</b>. It then opens full screen and works without a connection.`:
-    `<b>Put it on your home screen:</b> open the browser menu, then choose <b>Install app</b> or <b>Add to Home screen</b>. It then opens full screen and works without a connection.`;
+  el.innerHTML=installEvt?`<span><b>Install the app</b>: full screen, works offline.</span> <button class="btn small" id="instbtn">Install</button>`:
+    isIOS?`<b>Install:</b> Safari's Share button, then <b>Add to Home Screen</b>.`:
+    `<b>Install:</b> browser menu, then <b>Install app</b> or <b>Add to Home screen</b>.`;
   const b=$('#instbtn');if(b)b.onclick=installNow}
 async function installNow(){if(standalone()){HP.toast('The app is already on your home screen.');return}
   if(installEvt){const ev=installEvt;installEvt=null;ev.prompt();try{await ev.userChoice}catch(e){}if(cur==='home')installHint();return}
@@ -202,19 +205,19 @@ async function renderCustom(){
   const pv={'3d':`<img src="${c3.url}" alt="">`,skyline:`<div style="background:linear-gradient(${sky.top},${sky.hor})"></div>${mini}`,contours:`<div class="lines" style="background:${pal.bandInk};opacity:.2;-webkit-mask:url(img/contours.svg) center/cover;mask:url(img/contours.svg) center/cover"></div>`,
     map:thumb?`<img src="${thumb}" alt="">`:`<span class="pvnote">Plan a hike first</span>`,photo:photo?`<img src="${blobURL(box,photo)}" alt="">`:`<span class="pvnote">Choose a photo</span>`,plain:''};
   box.innerHTML=`<div class="cprev" aria-hidden="true"><div class="hero" id="cprev"></div></div>
-<section class="csec"><h3>Theme</h3><p>Colours for the header, the home screen and the buttons.</p><div class="themes">${LOOK.THEMES.map(t=>`<button class="tsw" data-k="theme" data-v="${t.id}" aria-pressed="${P.theme===t.id}" style="--b:${t.band};--a:${P.acc||t.acc}"><span class="blz"><i></i></span><b>${t.name}</b><small>${t.note}</small></button>`).join('')}</div></section>
-<section class="csec"><h3>Light or dark</h3><p>Automatic follows your phone's setting.</p><div class="segc">${seg('mode',[['auto','Automatic'],['light','Light'],['dark','Dark']])}</div></section>
-<section class="csec"><h3>Accent colour</h3><p>For the main buttons, the trail mark and highlights.</p><div class="swatches"><button class="sw def" data-k="acc" data-v="" aria-pressed="${!P.acc}">Theme colour</button>${LOOK.ACCENTS.map(c=>`<button class="sw" data-k="acc" data-v="${c}" style="--c:${c}" aria-pressed="${P.acc===c}" aria-label="Accent colour ${c}"></button>`).join('')}<label class="sw pick" title="Any colour"><input type="color" id="accpick" value="${pal.acc}" aria-label="Choose any accent colour"></label></div></section>
-<section class="csec"><h3>Home screen background</h3><p>What sits behind your next hike.</p><div class="bgs">${BGS.map(([k,t])=>`<button class="bgt" data-k="bg" data-v="${k}" aria-pressed="${P.bg===k}"><span class="pv">${pv[k]}</span><span>${t}</span></button>`).join('')}</div>
-  <div class="copt"${P.bg==='skyline'?'':' hidden'}><label for="todtg">Sky follows the time of day<small>Dawn, daylight, sunset and night by your phone's clock. Off uses the theme colours.</small></label><input type="checkbox" class="tg" id="todtg"${P.tod?' checked':''}></div>
+<section class="csec"><h3>Theme</h3><div class="themes">${LOOK.THEMES.map(t=>`<button class="tsw" data-k="theme" data-v="${t.id}" aria-pressed="${P.theme===t.id}" style="--b:${t.band};--a:${t.mark||P.acc||t.acc}"><span class="blz"><i></i></span><b>${t.name}</b><small>${t.note}</small></button>`).join('')}</div></section>
+<section class="csec"${pal.theme.carbon?' hidden':''}><h3>Light or dark</h3><div class="segc">${seg('mode',[['auto','Automatic'],['light','Light'],['dark','Dark']])}</div></section>
+<section class="csec"><h3>Accent colour</h3><div class="swatches"><button class="sw def" data-k="acc" data-v="" aria-pressed="${!P.acc}">Theme colour</button>${LOOK.ACCENTS.map(c=>`<button class="sw" data-k="acc" data-v="${c}" style="--c:${c}" aria-pressed="${P.acc===c}" aria-label="Accent colour ${c}"></button>`).join('')}<label class="sw pick" title="Any colour"><input type="color" id="accpick" value="${pal.acc}" aria-label="Choose any accent colour"></label></div></section>
+<section class="csec"><h3>Home screen background</h3><div class="bgs">${BGS.map(([k,t])=>`<button class="bgt" data-k="bg" data-v="${k}" aria-pressed="${P.bg===k}"><span class="pv">${pv[k]}</span><span>${t}</span></button>`).join('')}</div>
+  <div class="copt"${P.bg==='skyline'?'':' hidden'}><label for="todtg">Sky follows the time of day</label><input type="checkbox" class="tg" id="todtg"${P.tod?' checked':''}></div>
   <div class="crange"${P.bg==='photo'||P.bg==='map'?'':' hidden'}><label for="dimr">Darken the picture</label><input type="range" id="dimr" min="0" max="70" step="5" value="${P.dim}"><output>${P.dim}%</output></div>
   <div class="row2"${P.bg==='photo'?'':' hidden'}><button class="btn small" id="cphoto">${photo?'Choose another photo':'Choose a photo'}</button>${photo?'<button class="btn small ghost" id="cnophoto">Remove the photo</button>':''}</div>
-  <div class="copt"><label for="textg">Contour lines behind the pages<small>A faint topographic pattern on the page background</small></label><input type="checkbox" class="tg" id="textg"${P.texture?' checked':''}></div></section>
+  <div class="copt"><label for="textg">Contour lines behind the pages</label><input type="checkbox" class="tg" id="textg"${P.texture?' checked':''}></div></section>
 <section class="csec"><h3>Text size</h3><div class="segc">${seg('text',[['m','Standard'],['l','Large'],['xl','Extra large']])}</div></section>
 <section class="csec"><h3>Corners</h3><div class="segc">${seg('corners',[['soft','Soft'],['sharp','Sharp'],['round','Round']])}</div></section>
-<section class="csec"><h3>Your hikes list</h3><div class="segc">${seg('list',[['rows','Rows'],['cards','Cards']])}</div><div class="copt"><label for="tottg">Show totals<small>Hikes, kilometres and climbing added up</small></label><input type="checkbox" class="tg" id="tottg"${P.totals?' checked':''}></div></section>
-<section class="csec"><h3>Greeting</h3><p>Your name for the greeting on the home screen. Leave it empty for no name.</p><input class="cname" id="cname" maxlength="30" value="${esc(P.name)}" placeholder="Your name" autocomplete="given-name" aria-label="Your name"></section>
-<section class="csec"><h3>Route colours in 3D</h3><p>The colours of the days on the 3D map, the profile and the table. They change the next time you open a hike.</p><div class="routes">${Object.entries(LOOK.ROUTE).map(([k,r])=>`<button class="rt" data-k="route" data-v="${k}" aria-pressed="${P.route===k}"><i>${r.c.slice(0,5).map(c=>`<b style="--c:${c}"></b>`).join('')}</i>${r.name}</button>`).join('')}</div></section>
+<section class="csec"><h3>Your hikes list</h3><div class="segc">${seg('list',[['rows','Rows'],['cards','Cards']])}</div><div class="copt"><label for="tottg">Show totals</label><input type="checkbox" class="tg" id="tottg"${P.totals?' checked':''}></div></section>
+
+<section class="csec"><h3>Route colours in 3D</h3><p>From the next time you open a hike.</p><div class="routes">${Object.entries(LOOK.ROUTE).map(([k,r])=>`<button class="rt" data-k="route" data-v="${k}" aria-pressed="${P.route===k}"><i>${r.c.slice(0,5).map(c=>`<b style="--c:${c}"></b>`).join('')}</i>${r.name}</button>`).join('')}</div></section>
 <button class="btn ghost creset" id="creset">Reset to the original look</button>`;
   await renderPreview();
   if(focus){const el=focus.startsWith('[')?box.querySelector(focus):document.getElementById(focus);if(el)el.focus({preventScroll:true})}}
@@ -257,9 +260,8 @@ function setMode(m){NEW.mode=m;$('#tab-draw').setAttribute('aria-selected',Strin
   $('#filebox').hidden=m!=='file';$('#undo').hidden=$('#clear').hidden=m!=='draw';$('#reverse').hidden=!(m==='file'&&NEW.file);
   if(map){drawWps();drawLine();if(m==='file'&&NEW.file)fitFile()}updateHow();updateStats();updateBuildBtn()}
 $('#tab-draw').addEventListener('click',()=>setMode('draw'));$('#tab-file').addEventListener('click',()=>setMode('file'));
-function updateHow(){const n=NEW.pts.length;$('#how').textContent=(navigator.onLine?'':'You are offline. Planning a new hike needs a connection; your saved hikes still open. ')+(NEW.mode==='file'?'Choose a route file. It shows on the map; the plan follows it exactly.':
-  n===0?'Tap the map where you start. Search for a place or use your location to get there quickly.':n===1?'Now tap where you finish, or the next place you want to pass.':
-  'Tap to add more points. Drag a point to move it, tap a point to remove it, or tap the line to add a point in between. The route follows mapped trails.')}
+function updateHow(){const n=NEW.pts.length;$('#how').textContent=(navigator.onLine?'':'Offline: a new hike needs a connection. ')+(NEW.mode==='file'?'':
+  n===0?'Tap where you start.':n===1?'Tap where you finish.':'Tap to add a point. Drag to move one, tap one to remove it.')}
 addEventListener('online',()=>{if(cur==='new')updateHow()});addEventListener('offline',()=>{if(cur==='new')updateHow()});
 function wpIcon(k,n){const t=k===0?'S':k===n-1?'F':String(k);return L.divIcon({className:'',html:`<span class="wp ${k===0?'s':k===n-1?'f':''}">${t}</span>`,iconSize:[30,30],iconAnchor:[15,15],popupAnchor:[0,-14]})}
 function drawWps(){if(!map)return;wpLayer.clearLayers();if(NEW.mode!=='draw')return;const n=NEW.pts.length;
@@ -325,9 +327,14 @@ const metaOf=(D,thumb)=>{const R=D.route,n=R.d.length,L=R.d[n-1]||1,end=parseDay
   let hi=0;for(let i=1;i<n;i++)if(R.e[i]>R.e[hi])hi=i;
   const near=D.points.filter(p=>p.kind!=='water'&&p.kind!=='high'&&Math.abs(R.d[p.i]-R.d[hi])<.4).sort((a,b)=>Math.abs(R.d[a.i]-R.d[hi])-Math.abs(R.d[b.i]-R.d[hi]))[0];
   const hiE=near&&D.official&&D.official[near.name]?D.official[near.name]:R.e[hi];
-  return{v:3,id:D.id,name:D.name,date:D.date,end:isoDay(end),days:D.days.length,km:+(+L).toFixed(2),up:D.days.reduce((s,d)=>s+d.up,0),created:D.created,updated:Date.now(),center:D.center,thumb,
+  return{v:4,id:D.id,name:D.name,date:D.date,end:isoDay(end),days:D.days.length,km:+(+L).toFixed(2),up:D.days.reduce((s,d)=>s+d.up,0),created:D.created,updated:Date.now(),center:D.center,thumb,
     prof,hi:Math.round(hiE),hiFr:+(R.d[hi]/L).toFixed(4),hiName:near?near.name:'',nights:D.days.slice(0,-1).map(d=>+(R.d[d.i1]/L).toFixed(4)),fcd:fcDays(D),fcAt:D.fc?D.fc.issued:0,
-    wx:wxSummary(D),ensAt:D.ens?D.ens.issued:0,years:D.clim&&D.clim.years||null,cover:D.cover||''}};
+    wx:wxSummary(D),ensAt:D.ens?D.ens.issued:0,years:D.clim&&D.clim.years||null,cover:D.cover||'',...dayFigures(D)}};
+// km-effort of the hardest day, and the daylight left at arrival on the tightest day (walking times from the plan, at the chosen pace and rests)
+function dayFigures(D){try{const st=D.set||{},[h,mn]=String(st.start||'07:00').split(':').map(Number),t0=(h||0)+(mn||0)/60,k=(+st.pace||1)*(st.breaks===false?1:7/6);
+  let eff=0,dl=99;D.days.forEach((d,j)=>{eff=Math.max(eff,HP.effort(d.km,d.up));const day=parseDay(D.date);day.setDate(day.getDate()+j);
+    const s=HP.sunTimes(D.center.lat,D.center.lon,day,D.tz);dl=Math.min(dl,s.set-(t0+(d.hours||0)*k))});
+  return{eff:+eff.toFixed(1),dl:dl<99?+dl.toFixed(2):null}}catch(e){return{}}}
 function wxSummary(D){try{const T=HP.wxTrip(D);return T?{src:T.src,pct:T.pct,days:T.days.map(x=>({d:x.d,src:x.src,pct:x.pct}))}:null}catch(e){return null}}
 // one line of weather per day for the home screen, from the hourly forecast along the route (walking hours)
 function fcDays(D){const F=D.fc;if(!F||!F.start||F.start.slice(0,10)!==D.date||!F.pts)return null;const out=[];
