@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='1.5';
+const VERSION='1.5.1';
 const SCREENS=['home','new','build','view','custom','about'];
 let cur='',viewId=null,building=null,installEvt=null;
 
@@ -388,7 +388,7 @@ async function exportGPX(D){const R=D.route;
   HP.download(fname,file);HP.toast('GPX file saved to your downloads')}
 
 /* ---------- start ---------- */
-$('#hint').textContent=coarse?'One finger turns · two fingers move and zoom · tap the line':'Drag to turn · right-drag to move · scroll to zoom · click the line';
+$('#hint').textContent=coarse?'One finger moves · two fingers turn and zoom · tap the line':'Drag to turn · right-drag to move · scroll to zoom · click the line';
 if(isIOS)$('#file').removeAttribute('accept'); // iOS greys out .gpx files when it does not know the type
 /* Updates: the app opens instantly from the copy kept on the phone, then asks the service worker to look for newer files.
    When the app has changed, it reloads straight away on the hikes list or About; anywhere else it waits until you go back to the list. */

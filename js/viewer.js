@@ -431,7 +431,7 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   makeLabels();
   const showLbl=p=>p.lm?true:S.day?(R.day[p.i]===S.day||p.i===DAYS[S.day-1].i0-1):(p.kind==='start'||p.kind==='end'||overnight[p.i]||OFFICIAL[p.name]||p.kind==='high');
   const controls=new THREE.OrbitControls(camera,cv);
-  Object.assign(controls,{enableDamping:true,dampingFactor:.08,screenSpacePanning:false,maxPolarAngle:1.45,minDistance:220,maxDistance:250000});
+  Object.assign(controls,{enableDamping:true,dampingFactor:.08,screenSpacePanning:false,maxPolarAngle:1.45,minDistance:220,maxDistance:250000,touches:{ONE:-1,TWO:-1}});
   const LMV=(D.landmarks||[]).slice(0,4).map(m=>({x:wx(m.x),z:wz(m.y),y:m.e}));
   // overview direction: from the side of the route's main axis, looking roughly north
   let mx=0,mz=0;for(let i=0;i<N;i+=4){mx+=rp[i*3];mz+=rp[i*3+2]}const cnt=Math.ceil(N/4);mx/=cnt;mz/=cnt;let sxx=0,szz=0,sxz=0;for(let i=0;i<N;i+=4){const dx=rp[i*3]-mx,dz=rp[i*3+2]-mz;sxx+=dx*dx;szz+=dz*dz;sxz+=dx*dz}
@@ -551,7 +551,55 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   const hideHint=()=>{$('#hint').style.opacity=0};
   cv.addEventListener('pointermove',e=>{if(e.pointerType==='mouse'&&!playing&&!e.buttons)pick(e,16)});
   cv.addEventListener('pointerdown',e=>{down={x:e.clientX,y:e.clientY};hideHint();touched=true});
-  cv.addEventListener('pointerup',e=>{if(down&&Math.hypot(e.clientX-down.x,e.clientY-down.y)<6)pick(e,30);down=null});
+  cv.addEventListener('pointerup',e=>{if(down&&!multi&&Math.hypot(e.clientX-down.x,e.clientY-down.y)<6)pick(e,30);down=null});
+  // ---------- touch: one finger moves the map, two fingers turn and tilt it, and pinch to zoom ----------
+  // The ground under the finger stays under it, as on a paper map, and a flick glides on. A pinch keeps the spot between
+  // the fingers in place; moving both fingers sideways turns the view, up and down tilts it, and a twist turns it too.
+  const TP=new Map(),rc=new THREE.Raycaster(),nd=new THREE.Vector2(),gpl=new THREE.Plane(new THREE.Vector3(0,1,0),0),tv1=new THREE.Vector3(),tv2=new THREE.Vector3(),sph=new THREE.Spherical();
+  let tg=null,glide=null,multi=false;const TWIST=1;
+  const rayAt=(x,y)=>{const r=cv.getBoundingClientRect();nd.set((x-r.left)/r.width*2-1,1-(y-r.top)/r.height*2);camera.updateMatrixWorld();rc.setFromCamera(nd,camera);return rc.ray};
+  // the ground under a point of the screen: walk along the ray until it goes below the ground, then narrow it down
+  const groundAt=(x,y,out)=>{const ry=rayAt(x,y),o=ry.origin,d=ry.direction,far=camera.position.distanceTo(controls.target)*4+3000,st=far/120,below=t=>o.y+d.y*t<=gAt(o.x+d.x*t,o.z+d.z*t);
+    for(let t=st;t<=far;t+=st)if(below(t)){let a=t-st,b=t;for(let k=0;k<12;k++){const m=(a+b)/2;if(below(m))b=m;else a=m}return out.copy(d).multiplyScalar(b).add(o)}
+    gpl.constant=-controls.target.y;return ry.intersectPlane(gpl,out)};
+  const levelAt=(x,y,h,out)=>{gpl.constant=-h;return rayAt(x,y).intersectPlane(gpl,out)};
+  // move the view sideways, keeping the point it turns around within reach of the model
+  const moveBy=(dx,dz)=>{const R4=WXV.U.uRect.value,t=controls.target,nx=Math.min(Math.max(t.x+dx,R4.x-R4.z*.15),R4.x+R4.z*1.15),nz=Math.min(Math.max(t.z+dz,R4.y-R4.w*.15),R4.y+R4.w*1.15);
+    dx=nx-t.x;dz=nz-t.z;camera.position.x+=dx;camera.position.z+=dz;t.x=nx;t.z=nz;return Math.hypot(dx,dz)};
+  const pair=()=>{const[a,b]=[...TP.values()];return{x:(a.x+b.x)/2,y:(a.y+b.y)/2,d:Math.hypot(a.x-b.x,a.y-b.y),a:Math.atan2(b.y-a.y,b.x-a.x)}};
+  let tdirty=false;
+  // A gesture starts with one finger or two. Two fingers pinch, turn or twist only once they have clearly begun to,
+  // so a pinch doesn't also turn the view and a turn doesn't also zoom.
+  const startTouch=()=>{glide=null;tdirty=false;if(TP.size===1){const p=[...TP.values()][0],g=groundAt(p.x,p.y,new THREE.Vector3());tg=g?{k:1,g}:null;p.h=[]}
+    else if(TP.size===2){multi=true;const m=pair();tg={k:2,...m,x0:m.x,y0:m.y,d0:m.d,a0:m.a,zoom:false,turn:false,twist:false}}else tg=null};
+  const wrapA=a=>a>Math.PI?a-2*Math.PI:a<-Math.PI?a+2*Math.PI:a;
+  // the fingers' latest positions are applied once per frame, both fingers together
+  const touchStep=now=>{if(!tg||!tdirty)return;tdirty=false;fly=null;
+    if(tg.k===1){const p=[...TP.values()][0],q=p&&levelAt(p.x,p.y,tg.g.y,tv1);if(!q)return;let dx=tg.g.x-q.x,dz=tg.g.z-q.z;const lim=camera.position.distanceTo(controls.target)*.5,l=Math.hypot(dx,dz);if(l>lim){dx*=lim/l;dz*=lim/l}
+      moveBy(dx,dz)}
+    else if(tg.k===2&&TP.size===2){const m=pair(),el=cv.clientHeight||1,dist=camera.position.distanceTo(controls.target);
+      if(!tg.zoom&&Math.abs(m.d-tg.d0)>16)tg.zoom=true;if(!tg.turn&&Math.hypot(m.x-tg.x0,m.y-tg.y0)>12)tg.turn=true;if(!tg.twist&&Math.abs(wrapA(m.a-tg.a0))>.1)tg.twist=true;
+      if(tg.zoom){const s=Math.min(Math.max(tg.d/Math.max(m.d,1),controls.minDistance/dist),controls.maxDistance/dist);
+        if(Math.abs(s-1)>1e-5){let G=groundAt(m.x,m.y,tv2);if(!G||G.distanceTo(camera.position)>dist*3)G=tv2.copy(controls.target);camera.position.sub(G).multiplyScalar(s).add(G);controls.target.sub(G).multiplyScalar(s).add(G)}}
+      if(tg.turn||tg.twist){tv1.copy(camera.position).sub(controls.target);sph.setFromVector3(tv1);
+        if(tg.turn){sph.theta-=2*Math.PI*(m.x-tg.x)/el;sph.phi=Math.min(Math.max(sph.phi-2*Math.PI*(m.y-tg.y)/el,.05),controls.maxPolarAngle)}
+        if(tg.twist)sph.theta+=TWIST*wrapA(m.a-tg.a);
+        tv1.setFromSpherical(sph);camera.position.copy(controls.target).add(tv1)}
+      Object.assign(tg,{x:m.x,y:m.y,d:m.d,a:m.a})}
+    camera.lookAt(controls.target)};
+  cv.addEventListener('pointerdown',e=>{if(e.pointerType!=='touch')return;try{cv.setPointerCapture(e.pointerId)}catch(x){}touchStep(performance.now());TP.set(e.pointerId,{x:e.clientX,y:e.clientY});startTouch()});
+  cv.addEventListener('pointermove',e=>{if(e.pointerType!=='touch'||!TP.has(e.pointerId))return;const p=TP.get(e.pointerId);p.x=e.clientX;p.y=e.clientY;tdirty=true;
+    if(p.h){const cs=e.getCoalescedEvents&&e.getCoalescedEvents();for(const c of cs&&cs.length?cs:[e])p.h.push([c.timeStamp,c.clientX,c.clientY]);while(p.h.length>2&&e.timeStamp-p.h[0][0]>100)p.h.shift()}});
+  const endTouch=e=>{if(!TP.has(e.pointerId))return;const now=performance.now(),p=TP.get(e.pointerId);if(p.x!==e.clientX||p.y!==e.clientY){p.x=e.clientX;p.y=e.clientY;tdirty=true}touchStep(now);TP.delete(e.pointerId);
+    // a flick: the finger was still moving when it left the screen, so the map carries on at the finger's speed
+    if(tg&&tg.k===1&&!TP.size&&e.type==='pointerup'&&p.h&&p.h.length>1){const h=p.h.filter(q=>e.timeStamp-q[0]<100),a=h[0],b=h[h.length-1];
+      if(h.length>1&&e.timeStamp-b[0]<80&&b[0]-a[0]>8){const vx=(b[1]-a[1])/(b[0]-a[0]),vy=(b[2]-a[2])/(b[0]-a[0]);
+        if(Math.hypot(vx,vy)>.25){const q0=levelAt(p.x,p.y,tg.g.y,new THREE.Vector3()),q1=levelAt(p.x+vx*16,p.y+vy*16,tg.g.y,tv1);if(q0&&q1){let gx=(q0.x-q1.x)/16,gz=(q0.z-q1.z)/16;const vm=camera.position.distanceTo(controls.target)*.004,vl=Math.hypot(gx,gz);if(vl>vm){gx*=vm/vl;gz*=vm/vl}glide={vx:gx,vz:gz,t:now}}}}}
+    if(TP.size)startTouch();else{tg=null;setTimeout(()=>{multi=false},0)}};
+  cv.addEventListener('pointerup',endTouch);cv.addEventListener('pointercancel',endTouch);
+  // after a flick the map slows to a stop within about a second
+  const glideOn=now=>{const dt=Math.min(50,now-glide.t);glide.t=now;const moved=moveBy(glide.vx*dt,glide.vz*dt),k=Math.exp(-dt/280);glide.vx*=k;glide.vz*=k;
+    if(moved<1e-3*dt||Math.hypot(glide.vx,glide.vz)*16<camera.position.distanceTo(controls.target)*2e-4)glide=null};
   cv.addEventListener('wheel',hideHint,{passive:true});
   const syncTools=()=>{$$('[data-map]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.map===S.map)));$$('[data-color]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.color===S.color)));$$('[data-ex]').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.ex===S.ex)))};
   $('.tools').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
@@ -610,9 +658,10 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     const cg=gAt(c.x,c.z)+60*S.ex;if(c.y<cg)c.y=cg};
   const loop=now=>{raf=requestAnimationFrame(loop);if(document.hidden)return;
     if(fly){const t=Math.min(1,(now-fly.t0)/1100),k=ease(t);camera.position.lerpVectors(fly.p0,fly.f.pos,k);controls.target.lerpVectors(fly.q0,fly.f.target,k);if(t>=1)fly=null}
+    if(tg)touchStep(now);if(glide&&!fly)glideOn(now);
     if(playing&&now>=playing.t0){const d=playing.d,f=Math.min(1,(now-playing.t0)/playing.dur),T=f*WALK[d.i1];let lo=d.i0,hi=d.i1;while(lo<hi){const m=(lo+hi)>>1;if(WALK[m]<T)lo=m+1;else hi=m}if(lo!==S.i)setIndex(lo);if(f>=1)stopPlay()}
     controls.update();if(!fly)follow();WXV.frame(now);TILES.update(now);place();north.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;renderer.render(scene,camera)};
-  V3=window.V3={cam:camera,stage,ctl:controls,det:()=>bakeRT?[bakeRT.width,bakeRT.height]:null,cover:(w,h,up)=>{if(up)COVER_UP=up;return snap(w,h)},tiles:()=>TILES.stats(),mark(){WXV.time()},times(){WXV.time(true)},playing:()=>!!playing,
+  V3=window.V3={cam:camera,stage,ctl:controls,det:()=>bakeRT?[bakeRT.width,bakeRT.height]:null,cover:(w,h,up)=>{if(up)COVER_UP=up;return snap(w,h)},groundAt:(x,y)=>{const g=groundAt(x,y,new THREE.Vector3());return g&&g.toArray()},toScreen:a=>{const r=cv.getBoundingClientRect(),q=new THREE.Vector3(...a).project(camera);return[r.left+(q.x+1)/2*r.width,r.top+(1-q.y)/2*r.height]},gliding:()=>!!glide,tiles:()=>TILES.stats(),mark(){WXV.time()},times(){WXV.time(true)},playing:()=>!!playing,
     dayChanged(doFly){recolor();if(playing&&R.day[playing.d.i0]!==S.day)stopPlay();if(doFly)flyTo(frameDay())},
     relabel(){makeLabels();recolor()},
     dispose(){alive=false;cancelAnimationFrame(raf);TILES.dispose();[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};
