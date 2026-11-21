@@ -120,7 +120,7 @@ svg.ridge,svg.stars,.bgt svg{stroke:none}
 .hero[data-bg="3d"]{--band-ink:#fff;--band-mute:rgba(255,255,255,.66);--band-line:rgba(255,255,255,.14);--band-glass:rgba(255,255,255,.09);--band-glass-line:rgba(255,255,255,.2);background:#050707}
 .hero[data-bg="3d"] .hero-bg{overflow:hidden}
 .hero[data-bg="3d"] .hero-bg .blur{position:absolute;left:-12%;top:-6%;width:124%;height:112%;object-fit:cover;object-position:50% 70%;filter:blur(34px) saturate(1.2) brightness(.3)}
-.hero[data-bg="3d"] .hero-bg .shade{background:linear-gradient(180deg,rgba(0,0,0,0) 30%,rgba(0,0,0,.45) 62%,rgba(0,0,0,.8))}
+.hero[data-bg="3d"] .hero-bg .shade{background:linear-gradient(180deg,rgba(0,0,0,0) 30%,rgba(0,0,0,.45) 62%,rgba(0,0,0,.8) 86%,#000)}
 .hero[data-bg="3d"] .hero-sky{height:auto;aspect-ratio:4/5;max-height:72svh}
 .hero[data-bg="3d"] .cov{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 40%;-webkit-mask:linear-gradient(180deg,#000 60%,rgba(0,0,0,.5) 80%,transparent);mask:linear-gradient(180deg,#000 60%,rgba(0,0,0,.5) 80%,transparent)}
 .hero[data-bg="3d"] .hero-body{margin-top:-92px;text-shadow:0 1px 14px rgba(0,0,0,.35)}
