@@ -15,7 +15,14 @@ async def build(pg,date,name=None,reverse=False):
     if reverse: await pg.click("#reverse")
     if name: await pg.fill("#hname",name)
     await pg.fill("#hdate",date); await pg.dispatch_event("#hdate","input"); await pg.select_option("#hdays","3")
-    ok=await T.build_and_wait(pg); await pg.wait_for_timeout(800); return ok
+    ok=await T.build_and_wait(pg); await pg.wait_for_timeout(800)
+    # the 3D view saves a picture of the hike for the home screen once its satellite picture and heights are in
+    hid=await pg.evaluate("decodeURIComponent(location.hash.split('/')[2]||'')")
+    for _ in range(40):
+        if await pg.evaluate(f"HP.db.meta({json.dumps(hid)}).then(m=>!!(m&&m.cover))"): break
+        await pg.wait_for_timeout(750)
+    else: print("NO COVER for", hid)
+    return ok
 async def main(which):
     async with async_playwright() as p:
         b=await p.chromium.launch(executable_path=T.CHROME,headless=True,args=T.ARGS)
@@ -32,6 +39,7 @@ async def main(which):
             await pg.screenshot(path=S+"h_full_16.png")
             await pg.screenshot(path=S+"h_full_16_page.png",full_page=True)
             print("HERO:",(await pg.inner_text("#hero")).replace("\n"," | ")[:400])
+            print("HERO BG:",await pg.evaluate("document.querySelector('#hero').dataset.bg"),"| pictures loaded:",await pg.evaluate("[...document.querySelectorAll('#hero img.cov,.hike img.th.cov')].map(i=>i.complete&&i.naturalWidth).join(',')"))
             print("LIST:",(await pg.inner_text("#listwrap")).replace("\n"," | ")[:400])
             await pg.evaluate("window.scrollTo(0,520)"); await pg.wait_for_timeout(400); await pg.screenshot(path=S+"h_full_scrolled.png")
             await pg.evaluate("window.scrollTo(0,0)"); await pg.tap("#menubtn"); await pg.wait_for_timeout(500); await pg.screenshot(path=S+"h_drawer.png")

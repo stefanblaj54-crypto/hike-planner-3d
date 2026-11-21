@@ -85,7 +85,10 @@ async def main():
             # D: no connection
             await ctx.set_offline(True); t0 = time.time()
             await pg.reload(wait_until='load')
-            print('D offline open:', await ver(pg, cur + '-live2'), f'in {time.time()-t0:.1f}s | hero:', await pg.evaluate("!!document.querySelector('#hero .hero-sky,#hero svg')"))
+            v = await ver(pg, cur + '-live2'); dt = time.time() - t0
+            try: await pg.wait_for_function("!!document.querySelector('#hero .hero-sky,#hero svg')", timeout=5000); hero = True
+            except Exception: hero = False
+            print('D offline open:', v, f'in {dt:.1f}s | hero:', hero, '| picture:', await pg.evaluate("(i=>i?i.complete&&i.naturalWidth:'none')(document.querySelector('#hero img.cov'))"))
             await ctx.set_offline(False)
             bad = [e for e in errs if 'GPU' not in e and 'no longer' not in e and 'ERR_INTERNET_DISCONNECTED' not in e and 'Failed to fetch' not in e]
             print('ERRORS:', bad or 'none')

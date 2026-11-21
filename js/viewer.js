@@ -359,15 +359,10 @@ function init3D(sig){
   const hemi=new THREE.HemisphereLight(0xffffff,0x5a665e,0.82);scene.add(hemi);
   const sun=new THREE.DirectionalLight(0xffffff,0.45);sun.position.set(-0.7,1,-0.5);scene.add(sun);scene.add(sun.target);
   const wx=px=>(px-W/2)*M,wz=py=>(py-H/2)*M;
-  const pos=new Float32Array(GC*GR*3),uv=new Float32Array(GC*GR*2);let minH=1e9,maxH=-1e9;
-  for(let r=0;r<GR;r++)for(let c=0;c<GC;c++){const k=r*GC+c,px=c*GS+.5,py=r*GS+.5;pos[k*3]=wx(px);pos[k*3+1]=ht[k];pos[k*3+2]=wz(py);uv[k*2]=px/W;uv[k*2+1]=1-py/H;if(ht[k]<minH)minH=ht[k];if(ht[k]>maxH)maxH=ht[k]}
-  const idx=new Uint32Array((GC-1)*(GR-1)*6);let n=0;
-  for(let r=0;r<GR-1;r++)for(let c=0;c<GC-1;c++){const a=r*GC+c,b=a+1,d=a+GC,e=d+1;idx[n++]=a;idx[n++]=d;idx[n++]=b;idx[n++]=b;idx[n++]=d;idx[n++]=e}
-  const geo=new THREE.BufferGeometry();geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.setAttribute('uv',new THREE.BufferAttribute(uv,2));geo.setIndex(new THREE.BufferAttribute(idx,1));geo.computeVertexNormals();
+  let minH=1e9,maxH=-1e9;for(let k=0;k<ht.length;k++){if(ht[k]<minH)minH=ht[k];if(ht[k]>maxH)maxH=ht[k]}
   let alive=true;
   // the map picture is draped over the terrain; the relief style is drawn by the shader over a plain white picture
   const coarse=matchMedia('(pointer: coarse)').matches,white=new THREE.DataTexture(new Uint8Array([255,255,255,255]),1,1);white.needsUpdate=true;
-  const mat=new THREE.MeshLambertMaterial({color:0xffffff,map:white});mat.fog=false;mat.extensions={derivatives:true};const terr=new THREE.Mesh(geo,mat);group.add(terr);
   // shading detail baked on the GPU from the heights: the slope for the light (red, green) and how much open sky each point sees (blue)
   const ND=coarse?10:14,NS=coarse?12:15;
   const bakeM=new THREE.ShaderMaterial({uniforms:{uH:{value:null},uTx:{value:new THREE.Vector2()},uM:{value:new THREE.Vector2()},uG:{value:1.4},uEx:{value:S.ex}},depthTest:false,depthWrite:false,
@@ -398,13 +393,16 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     for(let k=0;k<w*h;k++)q[k]=Math.max(0,Math.min(65535,Math.round((a[k]-lo)*5)));return{w,h,q,mx:W*M/w,mz:H*M/h}};
   const det0=runBake(gridSrc());
   // the detailed heights saved with the hike replace the coarse grid as soon as they are read
-  const useDEM=()=>{const i=D.dem;if(!BLOBS.dem||!i)return;BLOBS.dem.arrayBuffer().then(buf=>{if(!alive||buf.byteLength!==i.w*i.h*2)return;WXV.U.uDet.value=runBake({w:i.w,h:i.h,q:new Uint16Array(buf),mx:W*M/i.w,mz:H*M/i.h})}).catch(e=>console.warn('heights',e))};
+  const useDEM=()=>{const i=D.dem;if(!BLOBS.dem||!i)return;BLOBS.dem.arrayBuffer().then(buf=>{if(!alive||buf.byteLength!==i.w*i.h*2)return;const q=new Uint16Array(buf);WXV.U.uDet.value=runBake({w:i.w,h:i.h,q,mx:W*M/i.w,mz:H*M/i.h});HS={w:i.w,h:i.h,q,min:i.min};TILES.heights();maybeCover()}).catch(e=>console.warn('heights',e))};
   const tex={},loadTex=name=>tex[name]||(tex[name]=(BLOBS[name]?Promise.resolve(BLOBS[name]):Promise.reject(Error('no '+name))).then(b=>new Promise((ok,no)=>{const im=new Image(),url=URL.createObjectURL(b);im.onload=()=>{URL.revokeObjectURL(url);ok(im)};im.onerror=e=>{URL.revokeObjectURL(url);no(e)};im.src=url})).then(im=>{const t=new THREE.Texture(im);t.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());t.needsUpdate=true;return t}));
   let mapPicked=false;
   const dropTex=keep=>{for(const k of Object.keys(tex))if(k!==keep){tex[k].then(t=>t.dispose()).catch(()=>{});delete tex[k]}};
-  const applyMap=()=>{const m=S.map;WXV.U.uStyle.value=m==='sat'?0:m==='topo'?1:2;$('#attrib').hidden=m!=='sat';
-    if(m==='relief'){mat.map=white;mat.needsUpdate=true;dropTex(null);return}
-    loadTex(m).then(t=>{if(!alive||S.map!==m)return;mat.map=t;mat.needsUpdate=true;dropTex(m)}).catch(()=>{if(alive&&S.map===m){S.map=BLOBS.topo&&m!=='topo'?'topo':'relief';syncTools();applyMap()}})};
+  let GTEX=null,HS=null;
+  const credit=()=>{$('#attrib').hidden=S.map!=='sat';$('#attrib-ch').hidden=!(S.map==='sat'&&TILES.swiss())};
+  const applyMap=()=>{const m=S.map;WXV.U.uStyle.value=m==='sat'?0:m==='topo'?1:2;
+    if(m==='relief'){GTEX=null;dropTex(null);TILES.restyle();credit();return}
+    TILES.restyle();credit();
+    loadTex(m).then(t=>{if(!alive||S.map!==m)return;GTEX=t;dropTex(m);TILES.restyle();maybeCover()}).catch(()=>{if(alive&&S.map===m){S.map=BLOBS.topo&&m!=='topo'?'topo':'relief';syncTools();applyMap()}})};
   const rp=new Float32Array(N*3);for(let i=0;i<N;i++){rp[i*3]=wx(R.x[i]);rp[i*3+1]=Math.max(R.e[i],TER.at(R.x[i],R.y[i]))+14;rp[i*3+2]=wz(R.y[i])}
   const lg=new THREE.LineGeometry();lg.setPositions(rp);
   const lineMat=new THREE.LineMaterial({vertexColors:true,linewidth:4.5,transparent:true}),caseMat=new THREE.LineMaterial({color:0xffffff,linewidth:8,transparent:true,depthWrite:false}),ghostMat=new THREE.LineMaterial({vertexColors:true,linewidth:2.5,transparent:true,opacity:.4,depthTest:false});
@@ -433,17 +431,17 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   makeLabels();
   const showLbl=p=>p.lm?true:S.day?(R.day[p.i]===S.day||p.i===DAYS[S.day-1].i0-1):(p.kind==='start'||p.kind==='end'||overnight[p.i]||OFFICIAL[p.name]||p.kind==='high');
   const controls=new THREE.OrbitControls(camera,cv);
-  Object.assign(controls,{enableDamping:true,dampingFactor:.08,screenSpacePanning:false,maxPolarAngle:1.45,minDistance:400,maxDistance:250000});
+  Object.assign(controls,{enableDamping:true,dampingFactor:.08,screenSpacePanning:false,maxPolarAngle:1.45,minDistance:220,maxDistance:250000});
   const LMV=(D.landmarks||[]).slice(0,4).map(m=>({x:wx(m.x),z:wz(m.y),y:m.e}));
   // overview direction: from the side of the route's main axis, looking roughly north
   let mx=0,mz=0;for(let i=0;i<N;i+=4){mx+=rp[i*3];mz+=rp[i*3+2]}const cnt=Math.ceil(N/4);mx/=cnt;mz/=cnt;let sxx=0,szz=0,sxz=0;for(let i=0;i<N;i+=4){const dx=rp[i*3]-mx,dz=rp[i*3+2]-mz;sxx+=dx*dx;szz+=dz*dz;sxz+=dx*dz}
   const ang=.5*Math.atan2(2*sxz,sxx-szz);let pvx=-Math.sin(ang),pvz=Math.cos(ang);if(pvz<0){pvx=-pvx;pvz=-pvz}const VIEW=[pvx,.75,pvz],SPAN=Math.sqrt((sxx+szz)/cnt)*3;
-  const frame=(i0,i1,extra=[])=>{
+  const frame=(i0,i1,extra=[],cov=0)=>{
     // wide screens look across the route; tall phone screens look along it, from behind the start, so it runs up the screen
     const port=camera.aspect<1;let gx,gz,up;
     if(port){let ax=rp[i1*3]-rp[i0*3],az=rp[i1*3+2]-rp[i0*3+2];const L=Math.hypot(ax,az);
-      if(L<SPAN*.35){ax=Math.cos(ang);az=Math.sin(ang);if(az<0){ax=-ax;az=-az}gx=ax;gz=az}else{gx=-ax/L;gz=-az/L}up=1.07/.62}
-    else{let vw=VIEW;if(i0!==0||i1!==N-1){let px=-(rp[i1*3+2]-rp[i0*3+2]),pz=rp[i1*3]-rp[i0*3];if(pz<0){px=-px;pz=-pz}const L=Math.hypot(px,pz)||1;vw=[px/L,.65,pz/L]}const hz=Math.hypot(vw[0],vw[2])||1;gx=vw[0]/hz;gz=vw[2]/hz;up=vw[1]/hz}
+      if(L<SPAN*.35){ax=Math.cos(ang);az=Math.sin(ang);if(az<0){ax=-ax;az=-az}gx=ax;gz=az}else{gx=-ax/L;gz=-az/L}up=cov||1.07/.62}
+    else{let vw=VIEW;if(i0!==0||i1!==N-1){let px=-(rp[i1*3+2]-rp[i0*3+2]),pz=rp[i1*3]-rp[i0*3];if(pz<0){px=-px;pz=-pz}const L=Math.hypot(px,pz)||1;vw=[px/L,.65,pz/L]}const hz=Math.hypot(vw[0],vw[2])||1;gx=vw[0]/hz;gz=vw[2]/hz;up=cov||vw[1]/hz}
     const ux=gz,uz=-gx;let u0=1e9,u1=-1e9,w0=1e9,w1=-1e9,y0=1e9,y1=-1e9,ys=0,cnt=0;
     const add=(x,z)=>{const u=x*ux+z*uz,w=x*gx+z*gz;u0=Math.min(u0,u);u1=Math.max(u1,u);w0=Math.min(w0,w);w1=Math.max(w1,w)};
     for(let i=i0;i<=i1;i+=2){add(rp[i*3],rp[i*3+2]);const y=rp[i*3+1];ys+=y;cnt++;y0=Math.min(y0,y);y1=Math.max(y1,y)}
@@ -461,7 +459,91 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     if(framedPort!==null&&(w<h)!==framedPort&&!fly){framedPort=w<h;const f=frameDay();if(touched)flyTo(f);else{camera.position.copy(f.pos);controls.target.copy(f.target)}}};
   resize();const ro=new ResizeObserver(resize);ro.observe(stage);ROs.push(ro);
   const f0=frameDay();camera.position.copy(f0.pos);controls.target.copy(f0.target);controls.update();framedPort=camera.aspect<1;
-  const WXV=initWX3D({scene,renderer,camera,controls,mat,terr,sun,hemi,W,H,M,minH,maxH,LM,stage,det:det0,view:f0.pos.clone().sub(f0.target)});resize();
+  const WXV=initWX3D({scene,renderer,camera,controls,sun,hemi,W,H,M,minH,maxH,LM,stage,det:det0,view:f0.pos.clone().sub(f0.target)});resize();
+  // ---------- the ground: a quadtree of map tiles that get finer and sharper where the camera is close, like a web map ----------
+  // Far away the model shows the pictures saved with the hike. Close up, each tile loads its own picture (Swiss aerial
+  // pictures inside Switzerland for Satellite, OpenTopoMap for Topo) and its ground follows the detailed heights.
+  const hgt=(px,py)=>{if(!HS)return TER.at(px,py);const w=HS.w,X=Math.min(Math.max(px/W*w-.5,0),w-1.001),Y=Math.min(Math.max(py/H*HS.h-.5,0),HS.h-1.001),c=X|0,r=Y|0,fx=X-c,fy=Y-r,k=r*w+c,q=HS.q;
+    return HS.min+.2*(q[k]*(1-fx)*(1-fy)+q[k+1]*fx*(1-fy)+q[k+w]*(1-fx)*fy+q[k+w+1]*fx*fy)};
+  const TILES=(()=>{
+    const TS=256,span=z=>TS*2**(14-z),NMAX=coarse?48:64,tg=new THREE.Group();group.add(tg);
+    const dpx=()=>HS?W/HS.w:GS,NSEG=z=>Math.max(16,Math.min(NMAX,Math.round(span(z)/dpx())));
+    const ZB=Math.max(8,Math.min(15,Math.floor(14-Math.log2(Math.max(W,H)/1024))));
+    const ZG=()=>Math.max(ZB,Math.ceil(14-Math.log2(NMAX*dpx()/TS)));
+    const OTM=(z,x,y)=>`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${z}/${x}/${y}.png`,SWISS=(z,x,y)=>`https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/${z}/${x}/${y}.jpeg`;
+    const prov=t=>S.map==='topo'?{zmax:17,url:OTM}:S.map==='sat'&&t.lat>45.78&&t.lat<47.86&&t.lon>5.92&&t.lon<10.53?{zmax:18,url:SWISS,swiss:true}:null;
+    let gEff=99; // the zoom the saved picture already matches: tiles only fetch pictures sharper than that
+    const own=t=>{const p=prov(t);return p&&t.z<=p.zmax&&t.z>gEff+.3?p:null};
+    const all=new Map(),idxC=new Map(),build=[],loads=[];let active=0,sel=0,drawnKey='',lastSel=-1e9,dirty=true,shadowAt=0,shadowDue=false,swissOn=false,drawn=[];
+    const mk=(z,x,y)=>{const k=z+'/'+x+'/'+y;let t=all.get(k);if(t)return t;const s=span(z),ax=x*s-D.x0,ay=y*s-D.y0;
+      t={k,z,x,y,s,ax,ay,r:{x0:Math.max(0,ax),y0:Math.max(0,ay),x1:Math.min(W,ax+s),y1:Math.min(H,ay+s)},mesh:null,mr:{value:new THREE.Vector4(0,0,1,1)},tex:null,ts:0,src:'',split:false,used:0,
+        lat:HP.geo.lat(D.y0+ay+s/2,14),lon:HP.geo.lon(D.x0+ax+s/2,14),h0:minH,h1:maxH,stale:false,queued:false,swiss:false};all.set(k,t);return t};
+    const kids=t=>{const out=[];for(let j=0;j<2;j++)for(let i=0;i<2;i++){const c=mk(t.z+1,t.x*2+i,t.y*2+j);if(!c.mesh){c.h0=t.h0;c.h1=t.h1}if(c.r.x1>c.r.x0&&c.r.y1>c.r.y0)out.push(c)}return out};
+    const s0=span(ZB),roots=[];for(let y=Math.floor(D.y0/s0);y<=Math.floor((D.y0+H-1)/s0);y++)for(let x=Math.floor(D.x0/s0);x<=Math.floor((D.x0+W-1)/s0);x++)roots.push(mk(ZB,x,y));
+    // triangles of an n×n patch plus a skirt hanging down from its border, which hides the cracks between patches of different detail
+    const index=n=>{let ix=idxC.get(n);if(ix)return ix;const n1=n+1,S0=n1*n1,ring=[];
+      for(let i=0;i<n;i++)ring.push(i);for(let j=0;j<n;j++)ring.push(j*n1+n);for(let i=n;i>0;i--)ring.push(n*n1+i);for(let j=n;j>0;j--)ring.push(j*n1);
+      const a=new Uint16Array(6*n*n+24*n);let m=0;
+      for(let r=0;r<n;r++)for(let c=0;c<n;c++){const p=r*n1+c,b=p+1,d=p+n1,e=d+1;a[m++]=p;a[m++]=d;a[m++]=b;a[m++]=b;a[m++]=d;a[m++]=e}
+      for(let k=0;k<4*n;k++){const p=ring[k],b=ring[(k+1)%(4*n)],p2=S0+k,b2=S0+(k+1)%(4*n);a[m++]=p;a[m++]=p2;a[m++]=b;a[m++]=b;a[m++]=p2;a[m++]=b2}
+      ix={a,ring};idxC.set(n,ix);return ix};
+    const geoOf=t=>{const n=NSEG(t.z),n1=n+1,{x0,y0,x1,y1}=t.r,nv=n1*n1+4*n,P=new Float32Array(nv*3),N=new Float32Array(nv*3),UV=new Float32Array(nv*2),SK=new Float32Array(nv),h=new Float32Array(n1*n1);let lo=1e9,hi=-1e9;
+      for(let j=0;j<n1;j++){const py=y0+(y1-y0)*j/n;for(let i=0;i<n1;i++){const px=x0+(x1-x0)*i/n,v=hgt(px,py),k=j*n1+i;h[k]=v;if(v<lo)lo=v;if(v>hi)hi=v;P[k*3]=wx(px);P[k*3+1]=v;P[k*3+2]=wz(py);UV[k*2]=i/n;UV[k*2+1]=1-j/n}}
+      const dx=Math.max(.001,(x1-x0)*M/n),dz=Math.max(.001,(y1-y0)*M/n);
+      for(let j=0;j<n1;j++)for(let i=0;i<n1;i++){const k=j*n1+i,gx=(h[j*n1+Math.min(n,i+1)]-h[j*n1+Math.max(0,i-1)])/(dx*(i>0&&i<n?2:1)),gz=(h[Math.min(n,j+1)*n1+i]-h[Math.max(0,j-1)*n1+i])/(dz*(j>0&&j<n?2:1)),l=Math.hypot(gx,1,gz);N[k*3]=-gx/l;N[k*3+1]=1/l;N[k*3+2]=-gz/l}
+      const ix=index(n),drop=Math.max(15,dx*1.5),S0=n1*n1;
+      ix.ring.forEach((g,k)=>{const o=(S0+k)*3;P[o]=P[g*3];P[o+1]=P[g*3+1]-drop;P[o+2]=P[g*3+2];N[o]=N[g*3];N[o+1]=N[g*3+1];N[o+2]=N[g*3+2];UV[(S0+k)*2]=UV[g*2];UV[(S0+k)*2+1]=UV[g*2+1];SK[S0+k]=drop});
+      const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(P,3));g.setAttribute('normal',new THREE.BufferAttribute(N,3));g.setAttribute('uv',new THREE.BufferAttribute(UV,2));g.setAttribute('sk',new THREE.BufferAttribute(SK,1));g.setIndex(new THREE.BufferAttribute(ix.a,1));g.computeBoundingSphere();
+      t.h0=lo;t.h1=hi;return g};
+    const make=t=>{const g=geoOf(t);if(t.mesh){t.mesh.geometry.dispose();t.mesh.geometry=g}
+      else{const m=WXV.prep(new THREE.MeshLambertMaterial({color:0xffffff,map:white,side:THREE.DoubleSide}),{uMapRect:t.mr});m.fog=false;m.extensions={derivatives:true};
+        t.mesh=new THREE.Mesh(g,m);t.mesh.castShadow=t.mesh.receiveShadow=true;t.mesh.visible=false;t.src='';tg.add(t.mesh)}t.stale=false;dirty=true};
+    const fr=new THREE.Frustum(),pm=new THREE.Matrix4(),inv=new THREE.Matrix4(),bx=new THREE.Box3(),cc=new THREE.Vector3(),lastM=new THREE.Matrix4();let Kpx=1000,lastH=0;
+    const SPLIT=coarse?440:400,MERGE=coarse?330:300,GSPL=coarse?8:7,GMRG=coarse?5.5:5;
+    const want=t=>{t.vis=true;if(t.z>=18)return t.split=false;const geo=t.z<ZG(),img=!!own({z:t.z+1,lat:t.lat,lon:t.lon});if(!geo&&!img)return t.split=false;
+      bx.min.set(wx(t.r.x0),t.h0*S.ex,wz(t.r.y0));bx.max.set(wx(t.r.x1),t.h1*S.ex,wz(t.r.y1));t.vis=fr.intersectsBox(bx);if(!t.vis)return t.split=false;
+      bx.getCenter(cc);const rad=bx.min.distanceTo(bx.max)/2,d=Math.max(camera.position.distanceTo(cc)-rad,rad*.25,1),edge=(t.r.x1-t.r.x0)*M/d*Kpx;
+      return t.split=(geo&&edge/NSEG(t.z)>(t.split?GMRG:GSPL))||(img&&edge>(t.split?MERGE:SPLIT))};
+    const visit=(t,out)=>{t.used=sel;if(want(t)){const ks=kids(t);ks.forEach(k=>{k.used=sel;if((!k.mesh||k.stale)&&!k.queued){k.queued=true;build.push(k)}});
+        if(ks.length&&ks.every(k=>k.mesh)){ks.forEach(k=>visit(k,out));return}}
+      if(t.stale&&!t.queued){t.queued=true;build.push(t)}out.push(t)};
+    // the sharpest picture available for a tile: its own, else the nearest larger tile's, else the saved picture
+    const setSrc=t=>{let a=t,src=null;while(a){if(a.tex){src=a;break}a=a.z>ZB?all.get((a.z-1)+'/'+(a.x>>1)+'/'+(a.y>>1)):null}
+      const key=src?src.k:GTEX?'g':'w';if(key===t.src)return src;t.src=key;const v=t.mr.value,m=t.mesh.material;
+      if(src){v.set((t.r.x0-src.ax)/src.s,1-(t.r.y1-src.ay)/src.s,(t.r.x1-t.r.x0)/src.s,(t.r.y1-t.r.y0)/src.s);m.map=src.tex}
+      else{v.set(t.r.x0/W,1-t.r.y1/H,(t.r.x1-t.r.x0)/W,(t.r.y1-t.r.y0)/H);m.map=GTEX||white}return src};
+    const pump=()=>{while(active<6&&loads.length){const{t,p}=loads.shift();if(t.used<sel-2||!t.mesh||!all.has(t.k)){t.ts=0;continue}active++;const style=S.map;
+      fetch(p.url(t.z,t.x,t.y),{mode:'cors'}).then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.blob()})
+        .then(b=>new Promise((ok,no)=>{const im=new Image(),u=URL.createObjectURL(b);im.onload=()=>{URL.revokeObjectURL(u);ok(im)};im.onerror=()=>{URL.revokeObjectURL(u);no(Error('picture'))};im.src=u}))
+        .then(im=>{if(!alive||S.map!==style||!all.has(t.k)){t.ts=0;return}const tx=new THREE.Texture(im);tx.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());tx.needsUpdate=true;t.tex=tx;t.ts=2;t.swiss=!!p.swiss;dirty=true})
+        .catch(()=>{t.ts=3}).finally(()=>{active--;pump()})}};
+    const drop=t=>{if(t.mesh){tg.remove(t.mesh);t.mesh.geometry.dispose();t.mesh.material.dispose();t.mesh=null}if(t.tex){t.tex.dispose();t.tex=null}all.delete(t.k)};
+    const evict=()=>{const cap=coarse?240:440;let nt=0;for(const t of all.values())if(t.tex)nt++;
+      if(all.size<=cap&&nt<=(coarse?56:120))return;const old=[...all.values()].filter(t=>t.used<sel&&t.z>ZB).sort((a,b)=>a.used-b.used);
+      for(const t of old){if(all.size<=cap*.8&&nt<=(coarse?44:96))break;if(t.tex)nt--;drop(t)}
+      // still too many pictures: let tiles that are off screen fall back to their larger tile's picture
+      if(nt>(coarse?56:120))for(const t of drawn)if(t.tex&&t.vis===false&&nt>(coarse?44:96)){t.tex.dispose();t.tex=null;t.ts=0;t.src='';nt--}};
+    function update(now){
+      if(build.length){const t0=performance.now();while(build.length&&performance.now()-t0<(coarse?6:9)){const t=build.shift();t.queued=false;if(all.has(t.k)&&t.used>=sel-2)make(t)}}
+      if(shadowDue&&now-shadowAt>350){renderer.shadowMap.needsUpdate=true;shadowAt=now;shadowDue=false}
+      const moved=!lastM.equals(camera.matrixWorld)||renderer.domElement.height!==lastH;
+      if(!moved&&!dirty&&now-lastSel<600)return;
+      lastM.copy(camera.matrixWorld);lastH=renderer.domElement.height;dirty=false;lastSel=now;sel++;
+      inv.copy(camera.matrixWorld).invert();pm.multiplyMatrices(camera.projectionMatrix,inv);fr.setFromProjectionMatrix(pm);
+      Kpx=renderer.domElement.height/(2*Math.tan(THREE.MathUtils.degToRad(camera.fov/2)));
+      gEff=GTEX&&GTEX.image&&GTEX.image.width?14+Math.log2(GTEX.image.width/W):99;
+      const out=[];roots.forEach(r=>visit(r,out));drawn=out;
+      const key=out.map(t=>t.k).join(',');
+      if(key!==drawnKey){drawnKey=key;const on=new Set(out);for(const t of all.values())if(t.mesh)t.mesh.visible=on.has(t);shadowDue=true}
+      let sw=false;for(const t of out){const src=setSrc(t);if(src&&src.swiss&&t.vis!==false)sw=true;const p=t.vis!==false&&own(t);if(p&&!t.ts){t.ts=1;loads.push({t,p})}}
+      if(sw!==swissOn){swissOn=sw;credit()}
+      pump();evict()}
+    roots.forEach(make);
+    return{update,swiss:()=>swissOn,
+      restyle(){for(const t of all.values()){if(t.tex){t.tex.dispose();t.tex=null}t.ts=0;t.src='';t.swiss=false}loads.length=0;swissOn=false;dirty=true},
+      heights(){for(const t of all.values())if(t.mesh)t.stale=true;roots.forEach(t=>{t.queued=true;build.push(t)});dirty=true},
+      stats:()=>({dpx:+dpx().toFixed(2),onScreen:drawn.filter(t=>t.vis!==false).length,zs:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.z]=(o[t.z]||0)+1,o),{}),drawn:drawn.length,maxZ:Math.max(0,...drawn.map(t=>t.z)),own:drawn.filter(t=>t.tex).length,swiss:swissOn,tiles:all.size,ZB,ZG:ZG()}),
+      dispose(){for(const t of [...all.values()])drop(t);group.remove(tg)}}})();
   const v=new THREE.Vector3();let down=null,playing=null,raf=0;
   const pick=(e,tol)=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,[a,b]=S.day?[DAYS[S.day-1].i0,DAYS[S.day-1].i1]:[0,N-1];let best=-1,bd=tol*tol;
     for(let i=a;i<=b;i++){v.set(rp[i*3],rp[i*3+1]*S.ex,rp[i*3+2]).project(camera);if(v.z>1)continue;const dx=(v.x+1)/2*r.width-mx,dy=(1-v.y)/2*r.height-my,dd=dx*dx+dy*dy;if(dd<bd){bd=dd;best=i}}
@@ -492,14 +574,48 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
       if(placed.some(q=>box.x<q.x+q.w+4&&q.x<box.x+box.w+4&&box.y<q.y+q.h+2&&q.y<box.y+box.h+2)){el.style.display='none';return}
       placed.push(box);el.style.display='';el.style.transform=`translate(${box.x}px,${box.y}px)`})};
   const ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+  // ---------- the cover: a picture of the whole hike for the home screen, rendered once from this model ----------
+  // Plain light, no clouds, no labels. Two pictures: a tall one for a phone's home screen (<id>:cover) and a wide one
+  // for wide screens and the list (<id>:coverw). D.cover holds the version, so a new version can draw them again.
+  const COVER_V='v1';let COVER_UP=[.8,.75];  // how steeply the camera looks down: tall pictures, wide pictures
+  const snap=(cw,ch)=>{const sv={p:camera.position.clone(),t:controls.target.clone(),a:camera.aspect,wx:S.wx},mv=marker.visible,now=performance.now();
+    camera.aspect=cw/ch;camera.updateProjectionMatrix();fitCover(cw<ch);
+    if(S.wx!=='plain'){S.wx='plain';WXV.time(true)}marker.visible=halo.visible=false;LM.forEach(m=>m.resolution.set(cw,ch));
+    WXV.frame(now);TILES.update(now);renderer.shadowMap.needsUpdate=true;
+    const rt=new THREE.WebGLRenderTarget(cw,ch,{samples:renderer.capabilities.isWebGL2?4:0});renderer.setRenderTarget(rt);renderer.render(scene,camera);
+    const px=new Uint8Array(cw*ch*4);renderer.readRenderTargetPixels(rt,0,0,cw,ch,px);renderer.setRenderTarget(null);rt.dispose();
+    S.wx=sv.wx;camera.aspect=sv.a;camera.updateProjectionMatrix();camera.position.copy(sv.p);controls.target.copy(sv.t);controls.update();
+    LM.forEach(m=>m.resolution.set(stage.clientWidth,stage.clientHeight));marker.visible=halo.visible=mv;WXV.time(true);renderer.shadowMap.needsUpdate=true;
+    const c2=document.createElement('canvas');c2.width=cw;c2.height=ch;const x2=c2.getContext('2d'),im=x2.createImageData(cw,ch);
+    for(let y=0;y<ch;y++)im.data.set(px.subarray((ch-1-y)*cw*4,(ch-y)*cw*4),y*cw*4);x2.putImageData(im,0,0);
+    return new Promise(ok=>c2.toBlob(b=>{c2.width=c2.height=0;ok(b)},'image/jpeg',.86))};
+  // Fit the whole route into a box on the picture, clear of the header at the top and of the bottom, where the home
+  // screen fades the picture out.
+  const fitCover=port=>{const f=frame(0,N-1,[],COVER_UP[port?0:1]),dir=f.pos.clone().sub(f.target),tgt=f.target.clone(),v=new THREE.Vector3(),rx=new THREE.Vector3(),ry=new THREE.Vector3(),
+      bx=port?[-.84,.84,-.46,.7]:[-.86,.86,-.3,.5],tv=Math.tan(THREE.MathUtils.degToRad(camera.fov/2));let dist=dir.length();dir.normalize();
+    const put=()=>{camera.position.copy(tgt).addScaledVector(dir,dist);camera.lookAt(tgt);camera.updateMatrixWorld();camera.matrixWorldInverse.copy(camera.matrixWorld).invert()};
+    for(let it=0;it<10;it++){put();let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+      for(let i=0;i<N;i+=2){v.set(rp[i*3],rp[i*3+1]*S.ex,rp[i*3+2]).project(camera);x0=Math.min(x0,v.x);x1=Math.max(x1,v.x);y0=Math.min(y0,v.y);y1=Math.max(y1,v.y)}
+      const sc=Math.min(1.6,Math.max(.6,Math.max((x1-x0)/(bx[1]-bx[0]),(y1-y0)/(bx[3]-bx[2])))),hh=dist*tv,ww=hh*camera.aspect;
+      rx.setFromMatrixColumn(camera.matrixWorld,0);ry.setFromMatrixColumn(camera.matrixWorld,1);
+      tgt.addScaledVector(rx,((x0+x1)-(bx[0]+bx[1]))/2*ww).addScaledVector(ry,((y0+y1)-(bx[2]+bx[3]))/2*hh);dist*=sc}
+    put();controls.target.copy(tgt)};
+  let coverAsked=false;
+  function maybeCover(){if(coverAsked||!alive||!D.id||S.map!=='sat'||!GTEX||(BLOBS.dem&&!HS)||D.cover===COVER_V)return;coverAsked=true;
+    setTimeout(async()=>{try{if(!alive)return;const t=await snap(900,1125);if(!alive||!t)return;const w=await snap(1600,900);if(!alive||!w)return;
+      await HP.db.putBlob(D.id+':cover',t);await HP.db.putBlob(D.id+':coverw',w);D.cover=COVER_V;save()}catch(e){console.warn('cover',e)}},1200)}
+  const gAt=(x,z)=>hgt(Math.min(Math.max(x/M+W/2,0),W),Math.min(Math.max(z/M+H/2,0),H))*S.ex;
+  const follow=()=>{const c=camera.position,t=controls.target,w=1-Math.min(1,Math.max(0,(c.distanceTo(t)-3000)/5000));
+    if(w>0){const dy=(gAt(t.x,t.z)+20*S.ex-t.y)*.12*w;if(Math.abs(dy)>.05){t.y+=dy;c.y+=dy}}
+    const cg=gAt(c.x,c.z)+60*S.ex;if(c.y<cg)c.y=cg};
   const loop=now=>{raf=requestAnimationFrame(loop);if(document.hidden)return;
     if(fly){const t=Math.min(1,(now-fly.t0)/1100),k=ease(t);camera.position.lerpVectors(fly.p0,fly.f.pos,k);controls.target.lerpVectors(fly.q0,fly.f.target,k);if(t>=1)fly=null}
     if(playing&&now>=playing.t0){const d=playing.d,f=Math.min(1,(now-playing.t0)/playing.dur),T=f*WALK[d.i1];let lo=d.i0,hi=d.i1;while(lo<hi){const m=(lo+hi)>>1;if(WALK[m]<T)lo=m+1;else hi=m}if(lo!==S.i)setIndex(lo);if(f>=1)stopPlay()}
-    controls.update();WXV.frame(now);place();north.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;renderer.render(scene,camera)};
-  V3=window.V3={cam:camera,stage,ctl:controls,det:()=>bakeRT?[bakeRT.width,bakeRT.height]:null,mark(){WXV.time()},times(){WXV.time(true)},playing:()=>!!playing,
+    controls.update();if(!fly)follow();WXV.frame(now);TILES.update(now);place();north.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;renderer.render(scene,camera)};
+  V3=window.V3={cam:camera,stage,ctl:controls,det:()=>bakeRT?[bakeRT.width,bakeRT.height]:null,cover:(w,h,up)=>{if(up)COVER_UP=up;return snap(w,h)},tiles:()=>TILES.stats(),mark(){WXV.time()},times(){WXV.time(true)},playing:()=>!!playing,
     dayChanged(doFly){recolor();if(playing&&R.day[playing.d.i0]!==S.day)stopPlay();if(doFly)flyTo(frameDay())},
     relabel(){makeLabels();recolor()},
-    dispose(){alive=false;cancelAnimationFrame(raf);[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};
+    dispose(){alive=false;cancelAnimationFrame(raf);TILES.dispose();[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};
   recolor();syncTools();applyMap();WXV.time(true);$('#msg').hidden=true;raf=requestAnimationFrame(loop);useDEM();
   // hikes saved before version 1.4 get the satellite picture and the detailed heights once, with a connection
   const need={sat:!BLOBS.sat,dem:!BLOBS.dem||!D.dem};
@@ -513,7 +629,7 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
 
 /* ---------- 3D weather ---------- */
 function initWX3D(o){
-  const{scene,renderer,camera,controls,mat,terr,sun,hemi,W,H,M,minH,maxH,LM,stage}=o,GC=TER.GC,GR=TER.GR,GS=TER.GS;
+  const{scene,renderer,camera,controls,sun,hemi,W,H,M,minH,maxH,LM,stage}=o,GC=TER.GC,GR=TER.GR,GS=TER.GS;
   const coarse=matchMedia('(pointer: coarse)').matches;
   const X0=-W*M/2,Z0=-H*M/2,SX=W*M,SZ=H*M,tAt=(x,z)=>TER.at(x/M+W/2,z/M+H/2),wx=px=>(px-W/2)*M,wz=py=>(py-H/2)*M,GREF=(minH+maxH)/2,DIAG=Math.hypot(SX,SZ);
   const C=c=>new THREE.Color(c),Z4=new THREE.Vector4(0,0,0,0);
@@ -521,7 +637,6 @@ function initWX3D(o){
 float wn(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(wh(i),wh(i+vec2(1.,0.)),f.x),mix(wh(i+vec2(0.,1.)),wh(i+vec2(1.,1.)),f.x),f.y);}
 float wf(vec2 p){return .5*wn(p)+.25*wn(p*2.03+7.1)+.125*wn(p*4.07+3.3)+.0625*wn(p*8.1+1.7);}`;
   renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;renderer.shadowMap.autoUpdate=false;
-  terr.castShadow=terr.receiveShadow=true;
   const smz=Math.min(renderer.capabilities.maxTextureSize,coarse?2048:4096);sun.shadow.mapSize.set(smz,smz);
   const shc=sun.shadow.camera,half=DIAG/2*1.05;shc.left=-half;shc.right=half;shc.top=half;shc.bottom=-half;shc.near=500;shc.far=DIAG*2+60000;shc.updateProjectionMatrix();
   sun.shadow.bias=-.0002;sun.shadow.normalBias=16;
@@ -548,10 +663,11 @@ vec3 skyCol(vec3 d){float h=d.y;vec3 c=mix(uHor,uZen,pow(clamp(h,0.,1.),.55));ve
     uDeckBase:{value:9e3},uDeckTop:{value:9e3},uDeckAmt:{value:0},uDeckShade:{value:0},uCloudCol:{value:C('#dfe3e6')},uCS:{value:null},uCSAmt:{value:0},uCSRect:{value:new THREE.Vector4(X0,Z0,SX,SZ)}};
   const csC=document.createElement('canvas');csC.width=512;csC.height=Math.max(64,Math.round(512*H/W));const csX=csC.getContext('2d');
   const csT=new THREE.CanvasTexture(csC);csT.flipY=false;U.uCS.value=csT;
-  mat.onBeforeCompile=sh=>{Object.assign(sh.uniforms,U);
-    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nvarying vec3 vWP;varying vec2 vTU;').replace('#include <worldpos_vertex>','#include <worldpos_vertex>\nvWP=(modelMatrix*vec4(transformed,1.0)).xyz;vTU=uv;');
+  // every ground tile gets the same shader; own: the tile's uniforms (where its picture comes from)
+  const prep=(mat,own)=>{mat.onBeforeCompile=sh=>{Object.assign(sh.uniforms,U,own);
+    sh.vertexShader=sh.vertexShader.replace('#include <common>','#include <common>\nattribute float sk;uniform vec4 uRect;varying vec3 vWP;varying vec2 vTU,vTL;').replace('#include <worldpos_vertex>','#include <worldpos_vertex>\nvWP=(modelMatrix*vec4(transformed,1.0)).xyz;vTL=uv;vTU=vec2((vWP.x-uRect.x)/uRect.z,1.-(vWP.z-uRect.y)/uRect.w);\n#ifdef USE_SHADOWMAP\nworldPosition.y+=sk*modelMatrix[1][1];\n#endif');
     sh.fragmentShader=sh.fragmentShader.replace('#include <common>',`#include <common>
-varying vec3 vWP;varying vec2 vTU;uniform float uEx,uTime,uSnowLine,uSnowAmt,uWet,uFogTop,uFogAmt,uDeckBase,uDeckTop,uDeckAmt,uDeckShade,uCSAmt,uStyle,uAO,uEdge,uHazeK,uHazeMax,uTree,uSnowP,uCI;
+varying vec3 vWP;varying vec2 vTU,vTL;uniform vec4 uMapRect;uniform float uEx,uTime,uSnowLine,uSnowAmt,uWet,uFogTop,uFogAmt,uDeckBase,uDeckTop,uDeckAmt,uDeckShade,uCSAmt,uStyle,uAO,uEdge,uHazeK,uHazeMax,uTree,uSnowP,uCI;
 uniform vec3 uFogCol,uCloudCol,uCamP;uniform sampler2D uCS,uDet;uniform vec4 uCSRect,uRect;uniform vec2 uWind;
 ${SKYF}
 ${NOISE}
@@ -561,7 +677,9 @@ c=mix(c,vec3(.64,.67,.50),smoothstep(t-150.,t+150.,a+n*140.));
 c=mix(c,vec3(.70,.67,.61),smoothstep(t+450.,t+950.,a+n*180.));
 c=mix(c,vec3(.55,.52,.50),smoothstep(33.,47.,sd+n*9.));
 c=mix(c,vec3(.95,.97,1.),smoothstep(uSnowP-120.,uSnowP+220.,a+n*220.)*(1.-smoothstep(38.,54.,sd)));
-return c*(.93+.14*n);}`).replace('#include <map_fragment>',`#include <map_fragment>
+return c*(.93+.14*n);}`).replace('#include <map_fragment>',`#ifdef USE_MAP
+vec4 sampledDiffuseColor=texture2D(map,uMapRect.xy+vTL*uMapRect.zw);diffuseColor*=sampledDiffuseColor;
+#endif
 vec4 dT=texture2D(uDet,vTU);vec2 sl=dT.rg*2.-1.;sl=sl/max(1.-abs(sl),.004);float wAlt=vWP.y/uEx;vec3 wN=normalize(vec3(-sl.x,1.,-sl.y));float sd=degrees(acos(clamp(wN.y,0.,1.)));
 if(uStyle>1.5){diffuseColor.rgb=reliefCol(wAlt,sd,wf(vWP.xz*.0016));${CONT}}
 else if(uStyle<.5){vec3 c=pow(diffuseColor.rgb,vec3(.9));float l=dot(c,vec3(.299,.587,.114));diffuseColor.rgb=clamp(mix(vec3(l),c,1.1)*1.03+.008,0.,1.);}
@@ -577,7 +695,7 @@ vec3 vd=vWP-uCamP;float dist=length(vd);vec3 skc=skyCol(vd/dist);
 gl_FragColor.rgb=mix(gl_FragColor.rgb,skc,uHazeMax*(1.-exp(-dist*uHazeK)));
 vec2 eq=min(vWP.xz-uRect.xy,uRect.xy+uRect.zw-vWP.xz);float ef=smoothstep(0.,uEdge,min(eq.x,eq.y));
 gl_FragColor.rgb=mix(skc,gl_FragColor.rgb,ef);`)};
-  mat.customProgramCacheKey=()=>'wx2';mat.needsUpdate=true;
+  mat.customProgramCacheKey=()=>'wx3';mat.needsUpdate=true;return mat};
   const skyM=new THREE.ShaderMaterial({side:THREE.BackSide,depthWrite:false,depthTest:false,uniforms:{...SKYU,uFlash:{value:0}},
     vertexShader:`varying vec3 vD;void main(){vD=position;gl_Position=(projectionMatrix*modelViewMatrix*vec4(position,1.)).xyww;}`,
     fragmentShader:`${SKYF}uniform float uFlash;varying vec3 vD;void main(){vec3 d=normalize(vD);vec3 c=skyCol(d);float s=max(dot(d,normalize(uSun)),0.);c+=uSunCol*pow(s,1400.)*2.2*uSunAmt+vec3(.5,.55,.7)*uFlash;gl_FragColor=vec4(c,1.);}`});
@@ -726,7 +844,7 @@ a*=smoothstep(uSnowL-120.,uSnowL+120.,y);vA=step(seed.w,a)*.9*smoothstep(0.,.05,
     wgeo.attributes.position.needsUpdate=true;wgeo.attributes.color.needsUpdate=true}
   function frame(now){const dt=Math.min(.05,(now-(lastNow||now))/1000);lastNow=now;U.uTime.value=now/1000;U.uEx.value=S.ex;
     camera.updateMatrixWorld();sky.position.copy(camera.position);U.uCamP.value.copy(camera.position);
-    const Dc=camera.position.distanceTo(controls.target),cl=plainOn?.92:(curSt.clar??.8);U.uHazeK.value=(.12+.5*(1-cl))/Math.max(Dc,1);
+    const Dc=camera.position.distanceTo(controls.target),cl=plainOn?.92:(curSt.clar??.8);U.uHazeK.value=(.12+.5*(1-cl))/Math.max(Dc,7000);
     if(plainOn)return;
     fogO.near=Dc*.9;fogO.far=Dc*(1.6+6*cl);
     const e=camera.matrixWorld.elements;puM.uniforms.uCamR.value.set(e[0],e[1],e[2]);puM.uniforms.uCamU.value.set(e[4],e[5],e[6]);camF.set(-e[8],-e[9],-e[10]);
@@ -740,7 +858,7 @@ a*=smoothstep(uSnowL-120.,uSnowL+120.,y);vA=step(seed.w,a)*.9*smoothstep(0.,.05,
     if(bolt.visible){const el=now-boltT;boltM.opacity=el<60?1:el<110?.2:el<170?.95:Math.max(0,1-(el-170)/140);if(el>110&&el<170)flash=Math.max(flash,.8);if(el>320)bolt.visible=false}
     flash=Math.max(0,flash-dt*5);hemi.intensity=baseHemi+flash*.22;skyM.uniforms.uFlash.value=flash*.18;puM.uniforms.uFlash.value=flash*.5;flashEl.style.opacity=(flash*.05).toFixed(3);
     windFrame(dt)}
-  return{time(force){apply(force)},frame,ex(){U.uEx.value=S.ex;placeY();dirty=true;fitShadow()},U}}
+  return{time(force){apply(force)},frame,ex(){U.uEx.value=S.ex;placeY();dirty=true;fitShadow()},U,prep}}
 
 HP.viewer={open,close,current:()=>D,updateForecast:()=>updateForecast(true)};
 })();

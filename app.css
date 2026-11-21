@@ -103,6 +103,34 @@ svg.ridge,svg.stars,.bgt svg{stroke:none}
 .hero[data-bg=photo] .hero-sky,.hero[data-bg=map] .hero-sky,.hero[data-bg=contours] .hero-sky{height:clamp(220px,36svh,380px)}
 .hero[data-bg=plain] .hero-sky{height:calc(env(safe-area-inset-top) + clamp(96px,14svh,150px))}
 
+/* home: the 3D picture of the next hike, rendered from its own model. On a phone it fades into a blurred, darkened copy
+   of itself, and the numbers and the weather sit on glass with a bright top edge. On a wide screen it fills the hero. */
+.hero[data-bg="3d"]{--band-ink:#fff;--band-mute:rgba(255,255,255,.74);--band-line:rgba(255,255,255,.2);--band-glass:rgba(255,255,255,.09);--band-glass-line:rgba(255,255,255,.22);background:#0e1412}
+.hero[data-bg="3d"] .hero-bg{overflow:hidden}
+.hero[data-bg="3d"] .hero-bg .blur{position:absolute;left:-12%;top:-6%;width:124%;height:112%;object-fit:cover;object-position:50% 70%;filter:blur(34px) saturate(1.3) brightness(.44)}
+.hero[data-bg="3d"] .hero-bg .shade{background:linear-gradient(180deg,rgba(8,12,10,0) 35%,rgba(8,12,10,.3) 70%,rgba(8,12,10,.55))}
+.hero[data-bg="3d"] .hero-sky{height:auto;aspect-ratio:4/5;max-height:76svh}
+.hero[data-bg="3d"] .cov{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:50% 40%;-webkit-mask:linear-gradient(180deg,#000 62%,rgba(0,0,0,.55) 80%,transparent);mask:linear-gradient(180deg,#000 62%,rgba(0,0,0,.55) 80%,transparent)}
+.hero[data-bg="3d"] .hero-body{margin-top:-96px;gap:8px;text-shadow:0 1px 16px rgba(0,0,0,.3)}
+.hero[data-bg="3d"] .greet{color:rgba(255,255,255,.86)}
+.hero[data-bg="3d"] .htitle{font-size:clamp(2.25rem,9.6vw,4.25rem)}
+.hstats{display:flex;margin:6px 0 2px;border-radius:calc(var(--rk)*16px);background:linear-gradient(180deg,rgba(255,255,255,.15),rgba(255,255,255,.05));border:1px solid rgba(255,255,255,.17);box-shadow:inset 0 1px 0 rgba(255,255,255,.3),0 14px 34px -10px rgba(0,0,0,.4);text-shadow:none}
+.hstats div{flex:1 1 auto;display:grid;align-content:start;gap:2px;padding:11px 10px 11px 13px;border-left:1px solid rgba(255,255,255,.13)}
+.hstats div:first-child{border-left:0}
+.hstats b{font:700 1.375rem/1.1 'Barlow Semi Condensed',sans-serif;font-variant-numeric:tabular-nums;white-space:nowrap;letter-spacing:.005em}
+.hstats span{font-size:0.8125rem;line-height:1.2;color:var(--band-mute);white-space:nowrap}
+.hwx{display:grid;gap:6px;text-shadow:none}
+.hwx .hlikely,.hwx .fcd{margin-top:0;max-width:none;background:linear-gradient(180deg,rgba(255,255,255,.13),rgba(255,255,255,.045));border-color:rgba(255,255,255,.16);box-shadow:inset 0 1px 0 rgba(255,255,255,.24)}
+.hwx .mbar{background:rgba(255,255,255,.14)}
+.hwx .hfc{margin-top:0}
+.hero[data-bg="3d"] .hcta{margin-top:6px;text-shadow:none}
+.hero[data-bg="3d"] .btn.glass{background:linear-gradient(180deg,rgba(255,255,255,.16),rgba(255,255,255,.06));border-color:rgba(255,255,255,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.3);-webkit-backdrop-filter:none;backdrop-filter:none}
+.hero[data-bg="3d"] .btn.primary{box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 10px 26px -10px rgba(0,0,0,.5)}
+.hcap{margin:6px 0 -4px;font-size:0.875rem;color:var(--band-mute);text-shadow:none}
+.hcred{margin:8px 0 0;font-size:0.6875rem;line-height:1.4;color:rgba(255,255,255,.58);text-shadow:none;max-width:64ch}
+.hcred a{color:inherit;text-decoration-color:rgba(255,255,255,.35)}
+@media(max-width:380px){.hstats div{padding:10px 7px 10px 10px}.hstats b{font-size:1.1875rem}.hstats span{font-size:0.75rem}}
+
 /* home: the list of hikes */
 .list{max-width:1120px;padding:clamp(24px,4vw,44px) max(4vw,18px) 36px}
 .listhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 18px;margin-bottom:4px}
@@ -120,12 +148,13 @@ h2{font:700 1.5625rem/1.1 'Barlow Semi Condensed',sans-serif;margin:0 0 10px}
 .hike .chev{grid-row:1/4;grid-column:3;width:20px;height:20px;color:var(--mute)}
 .hike.past .th{filter:grayscale(.55);opacity:.8}
 .past-h{grid-column:1/-1;margin:26px 0 0;font:700 1.1875rem 'Barlow Semi Condensed',sans-serif;color:var(--mute)}
-html[data-list=cards] .hikes{grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:16px;margin-top:12px}
-html[data-list=cards] .hike{grid-template-columns:minmax(0,1fr);gap:4px;padding:0 0 14px;border:1px solid var(--line);border-radius:calc(var(--rk)*14px);background:var(--panel);overflow:hidden}
-html[data-list=cards] .hike .th{grid-row:auto;width:100%;height:auto;aspect-ratio:16/10;border-radius:0;margin-bottom:8px}
-html[data-list=cards] .hike>:not(.th){margin:0 14px}
+html[data-list=cards] .hikes{grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:28px 24px;margin-top:18px}
+html[data-list=cards] .hike{grid-template-columns:minmax(0,1fr);gap:3px;padding:0;border:0;border-radius:0;background:none}
+html[data-list=cards] .hike .th{grid-row:auto;width:100%;height:auto;aspect-ratio:2/1;border-radius:calc(var(--rk)*14px);margin-bottom:9px;box-shadow:0 0 0 1px rgba(0,0,0,.05),0 16px 30px -18px rgba(0,0,0,.55)}
+html[data-list=cards] .hike .th.cov{object-position:50% 36%}
+html[data-list=cards] .hike>:not(.th){margin:0 2px}
 html[data-list=cards] .hike .chev{display:none}
-html[data-list=cards] .past-h{margin-top:14px}
+html[data-list=cards] .past-h{margin-top:12px}
 .empty-h{grid-column:1/-1;margin:6px 0 0;color:var(--mute);max-width:60ch}
 .install{margin-top:22px;max-width:640px;padding:14px 16px;border:1px solid var(--line);border-radius:calc(var(--rk)*12px);background:var(--panel);font-size:0.9375rem}
 .install b{font-weight:600}
@@ -367,6 +396,11 @@ tr.tot td{font-weight:600;border-bottom:0}
   .hero-body{max-width:none;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);column-gap:clamp(32px,5vw,72px);align-items:end;padding:6px max(4vw,40px) 34px}
   .hero-body>*{grid-column:1}
   .hero-body>.hfc,.hero-body>.fcnote{grid-column:2;grid-row:1/span 6;align-self:end;margin-bottom:6px}
+  .hero[data-bg="3d"] .hero-sky{aspect-ratio:auto;height:clamp(420px,64svh,760px);max-height:none}
+  .hero[data-bg="3d"] .cov{object-position:50% 42%}
+  .hero[data-bg="3d"] .hero-body{margin-top:-128px;padding-bottom:30px}
+  .hero[data-bg="3d"] .hero-body>.hwx{grid-column:2;grid-row:1/span 8;align-self:end;justify-self:end;width:100%;max-width:540px}
+  .hero[data-bg="3d"] .hstats{max-width:560px}
 }
 @media(max-width:900px){.brief{grid-template-columns:1fr}}
 @media(max-width:600px){

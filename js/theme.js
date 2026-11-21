@@ -26,10 +26,13 @@ const ROUTE={
   vivid:{name:'Vivid',c:['#f76707','#7048e8','#1c7ed6','#0ca678','#e64980','#f59f00','#4263eb','#ae3ec9','#2b8a3e','#c92a2a']},
   earth:{name:'Earth',c:['#c2410c','#4d7c0f','#0e7490','#a16207','#7e22ce','#be123c','#15803d','#1d4ed8','#b45309','#475569']},
   bold:{name:'Bold',c:['#ff3b30','#007aff','#ffcc00','#34c759','#af52de','#ff9500','#00c7be','#ff2d55','#5856d6','#a2845e']}};
-const DEF={theme:'spruce',mode:'auto',acc:'',bg:'skyline',tod:true,dim:30,text:'m',corners:'soft',list:'rows',totals:true,name:'',route:'vivid',texture:false};
+const DEF={theme:'spruce',mode:'auto',acc:'',bg:'3d',tod:true,dim:30,text:'m',corners:'soft',list:'cards',totals:true,name:'',route:'vivid',texture:false,lv:2};
 const KEY='hp-look';
 let P=load(),PAL=null;
-function load(){try{const o=JSON.parse(localStorage.getItem(KEY)||'{}');return Object.assign({},DEF,o&&typeof o==='object'?o:{})}catch(e){return Object.assign({},DEF)}}
+function load(){try{const o=JSON.parse(localStorage.getItem(KEY)||'{}');
+  // looks saved before version 1.5 move once to the new home screen: the 3D picture and cards (the old defaults were the skyline and rows)
+  if(o&&typeof o==='object'&&!o.lv){if(!o.bg||o.bg==='skyline')o.bg='3d';if(!o.list||o.list==='rows')o.list='cards';o.lv=2}
+  return Object.assign({},DEF,o&&typeof o==='object'?o:{})}catch(e){return Object.assign({},DEF)}}
 function save(){try{localStorage.setItem(KEY,JSON.stringify(P))}catch(e){}}
 const mq=matchMedia('(prefers-color-scheme: dark)');
 

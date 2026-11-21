@@ -35,7 +35,7 @@
     <div class="listhead"><h2 id="listh">Your hikes</h2><p class="totals" id="totals"></p></div>
     <div id="hikes" class="hikes"></div>
     <div class="install" id="install" hidden></div>
-    <p class="foot">Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.</p>
+    <p class="foot" id="foot">Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.</p>
   </div>
 </section>
 
@@ -99,6 +99,7 @@
     <dl class="srcs">
       <dt>Trails and routing</dt><dd><a href="https://brouter.de">BRouter</a>, using OpenStreetMap paths and their difficulty grades.</dd>
       <dt>Satellite pictures</dt><dd>Sentinel-2 cloudless - <a href="https://s2maps.eu" target="_blank" rel="noopener">https://s2maps.eu</a> by <a href="https://eox.at" target="_blank" rel="noopener">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2025). Free for personal use.</dd>
+      <dt>Close-up aerial pictures in and around Switzerland</dt><dd>SWISSIMAGE © <a href="https://www.swisstopo.admin.ch" target="_blank" rel="noopener">swisstopo</a>, free geodata of the Swiss Confederation.</dd>
       <dt>Map</dt><dd><a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA), from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> data and SRTM heights.</dd>
       <dt>Terrain heights</dt><dd>AWS Terrain Tiles (Mapzen), about 10 to 30 m resolution in the mountains. The light and the shade in hollows are worked out from them on your phone.</dd>
       <dt>Huts, passes, water, place names</dt><dd>OpenStreetMap, through Overpass and Nominatim.</dd>
@@ -124,7 +125,7 @@
       <div class="wpill" id="wpill" hidden></div>
       <div class="legend" id="legend"></div>
       <div class="xpill" id="xpill" role="status" hidden></div>
-      <div class="attrib" id="attrib" hidden>Sentinel-2 cloudless - <a href="https://s2maps.eu" target="_blank" rel="noopener">https://s2maps.eu</a> by <a href="https://eox.at" target="_blank" rel="noopener">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2025)</div>
+      <div class="attrib" id="attrib" hidden>Sentinel-2 cloudless - <a href="https://s2maps.eu" target="_blank" rel="noopener">https://s2maps.eu</a> by <a href="https://eox.at" target="_blank" rel="noopener">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2025)<span id="attrib-ch" hidden> · Aerial pictures © <a href="https://www.swisstopo.admin.ch" target="_blank" rel="noopener">swisstopo</a></span></div>
       <div class="hint" id="hint"></div>
       <div class="north" id="north" aria-hidden="true"><span>N</span></div>
       <button class="reset" id="reset">Reset view</button>

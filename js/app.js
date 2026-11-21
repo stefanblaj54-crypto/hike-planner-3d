@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='1.4';
+const VERSION='1.5';
 const SCREENS=['home','new','build','view','custom','about'];
 let cur='',viewId=null,building=null,installEvt=null;
 
@@ -45,7 +45,7 @@ addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#dialog').hidde
 /* ---------- home: the next hike as a skyline, then the list ---------- */
 // sample skyline for an empty app: the Făgăraș ridge from Bâlea Lac to Vârful Moldoveanu (OpenStreetMap trail, SRTM heights)
 const SAMPLE={prof:[2039,2037,2067,2106,2156,2200,2271,2295,2322,2300,2276,2252,2257,2271,2288,2300,2296,2286,2215,2188,2141,2142,2118,2099,2086,2079,2082,2124,2162,2166,2181,2156,2115,2123,2149,2157,2140,2103,2030,1962,1958,1971,1990,2024,2079,2130,2141,2143,2086,2084,2080,2083,2112,2180,2253,2296,2234,2186,2200,2210,2226,2267,2301,2296,2315,2336,2349,2354,2344,2329,2336,2334,2286,2252,2225,2232,2270,2286,2308,2297,2293,2302,2309,2332,2347,2321,2318,2303,2302,2304,2318,2318,2310,2306,2342,2407,2457,2498,2499,2508],
-  pin:{fr:.99,e:2544,name:'Vârful Moldoveanu'},cap:'The Făgăraș ridge from Bâlea Lac'};
+  pin:{fr:.99,e:2544,name:'Vârful Moldoveanu'},cap:'The Făgăraș ridge from Bâlea Lac',pic:'the Bärentrek in the Bernese Oberland'};
 const fmtKm=k=>{k=+k||0;return k<20?k.toFixed(1):nf.format(Math.round(k))};
 const daysTo=s=>Math.round((parseDay(s)-parseDay(isoDay(new Date())))/864e5);
 function greeting(){const h=new Date().getHours(),n=(LOOK.get().name||'').trim();return(h>=5&&h<12?'Good morning':h>=12&&h<18?'Good afternoon':'Good evening')+(n?`, ${n}`:'')+'.'}
@@ -59,6 +59,7 @@ function heroModel(next,count){const g=greeting();
     const when=n>1?`Your next hike starts in ${n} days.`:n===1?'Your next hike starts tomorrow.':n===0?'Your hike starts today.':e>=0?`Today is day ${1-n} of this hike.`:'';
     return{kind:'next',m:next,greet:`${g} ${when}`,title:next.name,dates:fmtRange(next.date,next.end),
       nums:[[fmtKm(next.km),'km'],[nf.format(next.up),'m of climbing'],[next.days,next.days>1?'days':'day']],
+      stats:[[`${fmtKm(next.km)} km`,'distance'],[`${nf.format(next.up)} m`,'climbing'],[String(next.days),next.days>1?'days':'day'],...(next.hi?[[`${nf.format(next.hi)} m`,'highest point']]:[])],
       prof:next.prof||SAMPLE.prof,pin:next.prof?{fr:next.hiFr,e:next.hi,name:next.hiName}:null,nights:next.nights||[],go:['open','Open in 3D'],alt:['new','New hike']}}
   return{kind:count?'more':'first',greet:g,title:count?'Where to next?':'Plan your first hike',
     text:count?'Draw a new route on the map or import a GPX file. Your earlier hikes are below.':'Draw a route on the map or import a GPX file. You get a 3D model of the hike with walking times, overnight stops and the weather for your days.',
@@ -91,20 +92,41 @@ function fcHTML(m){const w=HP.forecastWindow(m.date),wx=m.wx,deg=v=>`${Math.roun
   if(w.days>15)return`<p class="fcnote">The forecast for these days appears on ${esc(when)}.</p>`;
   if(w.ok)return`<p class="fcnote">${fcFail.has(m.id)?'The forecast could not be loaded. Open the hike to try again.':navigator.onLine?'Getting the forecast…':'The forecast loads when you are online.'}</p>`;
   return''}
+/* the 3D pictures of the hikes (saved by the 3D view as <id>:cover) and the sample picture for an empty list */
+const COV=new Map(),SAMPLE_PIC={w:'img/sample-wide.jpg',t:'img/sample-tall.jpg'},wideHero=()=>innerWidth>=900;
+const inkOf=url=>new Promise(ok=>{const im=new Image();im.onload=()=>{try{const c=document.createElement('canvas');c.width=12;c.height=16;const x=c.getContext('2d');x.drawImage(im,0,0,12,16);
+  const d=x.getImageData(0,0,12,2).data;let L=0;for(let i=0;i<d.length;i+=4)L+=(.2126*d[i]+.7152*d[i+1]+.0722*d[i+2])/255;ok(L/(d.length/4)>.56?'#13201a':'#fff')}catch(e){ok('#fff')}};im.onerror=()=>ok('#fff');im.src=url});
+async function coverOf(m,wide){if(!m||!m.cover)return null;const key=m.id+(wide?':w':':t'),c=COV.get(key);if(c&&c.k===m.cover)return c;
+  const b=await HP.db.blob(m.id+(wide?':coverw':':cover')).catch(()=>null);if(!b)return null;if(c)URL.revokeObjectURL(c.url);
+  const o={k:m.cover,url:URL.createObjectURL(b),ch:inSwiss(m.center)};COV.set(key,o);return o}
+const sampleCover=wide=>{const k=wide?'w':'t';return COV.get('sample:'+k)||COV.set('sample:'+k,{url:SAMPLE_PIC[k],sample:true,ch:true}).get('sample:'+k)};
+const dropCovers=id=>['w','t'].forEach(k=>{const c=COV.get(id+':'+k);if(c){URL.revokeObjectURL(c.url);COV.delete(id+':'+k)}});
+// swisstopo pictures are used close up in and around Switzerland, so those pictures carry its credit too
+const inSwiss=c=>!!c&&c.lat>45.6&&c.lat<48.05&&c.lon>5.7&&c.lon<10.75;
+const SATCREDIT='Satellite picture: Sentinel-2 cloudless - <a href="https://s2maps.eu" target="_blank" rel="noopener">https://s2maps.eu</a> by <a href="https://eox.at" target="_blank" rel="noopener">EOX IT Services GmbH</a> (Contains modified Copernicus Sentinel data 2025)';
 function blobURL(root,b){const u=URL.createObjectURL(b);(root._urls||(root._urls=[])).push(u);return u}
 async function renderHero(root,model,{mini=false}={}){
   const P=LOOK.get(),pal=LOOK.pal();let bg=P.bg,ink=pal.bandInk,bgHTML='',skyStyle='',skyInner='';
-  let img=null;if(bg==='photo')img=await HP.db.blob('app:photo').catch(()=>null);else if(bg==='map'){const m=model.m||latestMeta;if(m)img=await HP.db.blob(m.id+':relief').catch(()=>null)}
+  let img=null,cv=null;if(bg==='photo')img=await HP.db.blob('app:photo').catch(()=>null);else if(bg==='map'){const m=model.m||latestMeta;if(m)img=await HP.db.blob(m.id+':relief').catch(()=>null)}
+  // the 3D picture of the next hike; with no hike ahead, the latest hike's picture or the sample; a next hike without a picture yet keeps the skyline
+  else if(bg==='3d'){const m=model.kind==='next'?model.m:latestMeta,wide=mini||wideHero();cv=await coverOf(m,wide);if(!cv&&model.kind!=='next')cv=sampleCover(wide);
+    // the header sits on the picture's sky: dark letters on a pale sky (the usual case, so the first guess), white on a dark one
+    if(!cv)bg='skyline';else if(!mini&&!cv.ink)inkOf(cv.url).then(k=>{cv.ink=k;if(cur==='home'&&root.dataset.bg==='3d'&&root.querySelector(`img.cov[src="${cv.url}"]`))document.body.style.setProperty('--sky-ink',k)})}
   (root._urls||[]).forEach(u=>URL.revokeObjectURL(u));root._urls=[];
   if(bg==='photo'||bg==='map'){if(img){bgHTML=`<img src="${blobURL(root,img)}" alt=""><div class="shade" style="background:linear-gradient(180deg,rgba(0,0,0,.36) 0%,rgba(0,0,0,0) 24%,rgba(0,0,0,.16) 50%,rgba(6,10,8,.9) 100%),rgba(0,0,0,${(P.dim||0)/100})"></div>`;ink='#fff'}else bg=bg==='map'?'contours':'skyline'}
+  if(bg==='3d'&&mini){bgHTML=`<img src="${cv.url}" alt=""><div class="shade" style="background:linear-gradient(180deg,rgba(0,0,0,0) 30%,rgba(6,10,8,.88) 100%)"></div>`;ink='#fff';bg='photo'}
+  else if(bg==='3d'){bgHTML=`<img class="blur" src="${cv.url}" alt=""><div class="shade"></div>`;ink=cv.ink||'#13201a';skyInner=`<img class="cov" src="${cv.url}" alt="">`}
   if(bg==='contours')bgHTML='<div class="lines"></div>';
   if(bg==='skyline'){const s=skyParts(model,mini);skyInner=s.html;skyStyle=`background:${s.bg}`;ink=s.ink}
   root.dataset.bg=bg;
-  const nums=model.nums?`<div class="hnums">${model.nums.map(([v,u])=>`<div><b>${v}</b><span>${u}</span></div>`).join('')}</div>`:'';
+  const nums=bg==='3d'&&model.stats&&!mini?`<div class="hstats" style="--n:${model.stats.length}">${model.stats.map(([v,u])=>`<div><b>${v}</b><span>${u}</span></div>`).join('')}</div>`:
+    model.nums?`<div class="hnums">${model.nums.map(([v,u])=>`<div><b>${v}</b><span>${u}</span></div>`).join('')}</div>`:'';
   root.innerHTML=`<div class="hero-bg" aria-hidden="true">${bgHTML}</div><div class="hero-sky" style="${skyStyle}">${skyInner}</div><div class="hero-body">`+
     `<p class="greet">${esc(model.greet)}</p><h2 class="htitle">${esc(model.title)}</h2>`+(model.dates&&!mini?`<p class="hdates">${esc(model.dates)}</p>`:'')+(model.text&&!mini?`<p class="hdates htext">${esc(model.text)}</p>`:'')+nums+
-    (model.kind==='next'&&!mini?fcHTML(model.m):'')+
-    (!mini?`<div class="hcta"><button class="btn primary" data-act="${model.go[0]}">${model.go[1]}</button><button class="btn glass" data-act="${model.alt[0]}">${model.alt[0]==='new'?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>':''}${model.alt[1]}</button></div>`:'')+`</div>`;
+    (model.kind==='next'&&!mini?(bg==='3d'?(f=>f?`<div class="hwx">${f}</div>`:'')(fcHTML(model.m)):fcHTML(model.m)):'')+
+    (!mini?`<div class="hcta"><button class="btn primary" data-act="${model.go[0]}">${model.go[1]}</button><button class="btn glass" data-act="${model.alt[0]}">${model.alt[0]==='new'?'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>':''}${model.alt[1]}</button></div>`:'')+
+    (bg==='3d'&&!mini&&model.kind!=='next'?`<p class="hcap">In the picture: ${cv.sample?`a sample hike, ${esc(SAMPLE.pic)}`:`your last hike, ${esc(latestMeta.name)}`}.</p>`:'')+
+    (bg==='3d'&&!mini?`<p class="hcred">${SATCREDIT}${cv.ch?' · Aerial pictures © <a href="https://www.swisstopo.admin.ch" target="_blank" rel="noopener">swisstopo</a>':''}</p>`:'')+`</div>`;
   return ink}
 let homeSeq=0;
 async function showHome(){show('home');await renderHome()}
@@ -114,17 +136,19 @@ async function loadHikes(){let list=[];try{list=await HP.db.list()}catch(e){HP.t
 async function renderHome(){const seq=++homeSeq,{list,up,past,next,latest}=await loadHikes();
   if(seq!==homeSeq)return;lastList=list;nextMeta=next;latestMeta=latest;
   const ink=await renderHero($('#hero'),heroModel(nextMeta,list.length));if(seq!==homeSeq)return;
-  document.body.style.setProperty('--sky-ink',ink);headerState();renderList(up,past,list);installHint();
+  document.body.style.setProperty('--sky-ink',ink);headerState();await renderList(up,past,list);if(seq!==homeSeq)return;installHint();
   const miss=list.filter(m=>m.v!==3);if(miss.length)backfill(miss).then(ch=>{if(ch&&cur==='home')renderHome()});
   else if(nextMeta)refreshForecast(nextMeta).then(ch=>{if(ch&&cur==='home')renderHome()})}
 function spark(p){if(!p||p.length<2)return'';const lo=Math.min(...p),hi=Math.max(...p),r=Math.max(hi-lo,250),n=p.length,pt=p.map((e,i)=>`${(i/(n-1)*100).toFixed(1)},${(22.5-(e-lo)/r*19).toFixed(1)}`).join('L');
   return`<svg viewBox="0 0 100 24" preserveAspectRatio="none" aria-hidden="true"><path d="M0,24L${pt}L100,24Z" fill="currentColor" fill-opacity=".16" stroke="none"/><path d="M${pt}" stroke="currentColor" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`}
-function renderList(up,past,list){const P=LOOK.get();
-  const row=(m,old)=>`<button class="hike${old?' past':''}" data-id="${esc(m.id)}">${m.thumb?`<img class="th" src="${m.thumb}" alt="">`:'<span class="th"></span>'}<span class="nm">${esc(m.name)}</span><span class="dt">${esc(fmtDate(m.date,{weekday:'short',day:'numeric',month:'short',year:'numeric'}))}, ${m.days} ${m.days>1?'days':'day'}</span><span class="pf">${spark(m.prof)}<span>${fmtKm(m.km)} km</span><span>${nf.format(m.up)} m up</span></span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>`;
+async function renderList(up,past,list){const P=LOOK.get(),cards=P.list==='cards',pics={};
+  if(cards)for(const m of list){const c=await coverOf(m,true);if(c)pics[m.id]=c}
+  const row=(m,old)=>`<button class="hike${old?' past':''}" data-id="${esc(m.id)}">${pics[m.id]?`<img class="th cov" src="${pics[m.id].url}" alt="">`:m.thumb?`<img class="th" src="${m.thumb}" alt="">`:'<span class="th"></span>'}<span class="nm">${esc(m.name)}</span><span class="dt">${esc(fmtDate(m.date,{weekday:'short',day:'numeric',month:'short',year:'numeric'}))}, ${m.days} ${m.days>1?'days':'day'}</span><span class="pf">${spark(m.prof)}<span>${fmtKm(m.km)} km</span><span>${nf.format(m.up)} m up</span></span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></button>`;
   $('#listwrap').querySelector('.listhead').hidden=!list.length;
   const tk=list.reduce((s,m)=>s+(+m.km||0),0),tu=list.reduce((s,m)=>s+(+m.up||0),0);
   $('#totals').textContent=P.totals&&list.length>1?`${list.length} hikes, ${fmtKm(tk)} km and ${nf.format(Math.round(tu/10)*10)} m of climbing in all.`:'';
-  $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'')}
+  $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'');
+  const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Your hikes are stored only on this phone. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © <a href="https://www.swisstopo.admin.ch" target="_blank" rel="noopener">swisstopo</a>':'')+'.':''}`}
 $('#hikes').addEventListener('click',e=>{const b=e.target.closest('.hike');if(b)go('#/hike/'+encodeURIComponent(b.dataset.id))});
 $('#hero').addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
   if(a==='open'&&nextMeta)go('#/hike/'+encodeURIComponent(nextMeta.id));else if(a==='new'||a==='draw'){go('#/new');setMode('draw')}else if(a==='import')startImport()});
@@ -150,6 +174,8 @@ async function installNow(){if(standalone()){HP.toast('The app is already on you
   await ask(isIOS?'In Safari, tap the Share button, then Add to Home Screen. The app then opens from its own icon, full screen, and works without a connection.':'Open the browser menu, then choose Install app or Add to Home screen. The app then opens from its own icon, full screen, and works without a connection.',{ok:'Done',cancel:false})}
 addEventListener('beforeinstallprompt',e=>{e.preventDefault();installEvt=e;if(cur==='home')installHint()});
 document.addEventListener('hp-look',()=>{if(cur==='home')renderHome()});
+// the hero takes the tall 3D picture on a phone and the wide one on a wide screen
+matchMedia('(min-width:900px)').addEventListener('change',()=>{if(cur==='home')renderHome()});
 
 /* ---------- the menu ---------- */
 function openDrawer(){const d=$('#drawer');d.hidden=false;$('#menubtn').setAttribute('aria-expanded','true');
@@ -164,7 +190,7 @@ async function storageNote(){const n=lastList.length;let t=n?`${n} ${n>1?'hikes'
   $('#dfoot').textContent=`${t}. Version ${VERSION}.`}
 
 /* ---------- Customize ---------- */
-const BGS=[['skyline','Skyline of your next hike'],['contours','Contour lines'],['map','Map of your hike'],['photo','Your photo'],['plain','Plain colour']];
+const BGS=[['3d','3D picture of your next hike'],['skyline','Skyline of your next hike'],['contours','Contour lines'],['map','Map of your hike'],['photo','Your photo'],['plain','Plain colour']];
 const seg=(k,opts)=>opts.map(([v,t])=>`<button data-k="${k}" data-v="${v}" aria-pressed="${String(LOOK.get()[k])===v}">${t}</button>`).join('');
 async function renderCustom(){
   if(!lastList.length){const h=await loadHikes();lastList=h.list;nextMeta=h.next;latestMeta=h.latest}
@@ -172,8 +198,8 @@ async function renderCustom(){
   const box=$('#custom'),focus=document.activeElement&&box.contains(document.activeElement)?(document.activeElement.id||`[data-k="${document.activeElement.dataset.k}"][data-v="${document.activeElement.dataset.v}"]`):null;
   (box._urls||[]).forEach(u=>URL.revokeObjectURL(u));box._urls=[];
   const prof=nextMeta&&nextMeta.prof||SAMPLE.prof,mini=LOOK.skyline(prof,{band:pal.band,far:LOOK.mix(LOOK.mix(pal.band,sky.top,.5),sky.hor,.34),hor:sky.hor,rim:LOOK.mix(pal.band,'#ffffff',.24),seed:7,top:.3,bot:.96}).svg;
-  const thumb=(nextMeta||latestMeta||{}).thumb;
-  const pv={skyline:`<div style="background:linear-gradient(${sky.top},${sky.hor})"></div>${mini}`,contours:`<div class="lines" style="background:${pal.bandInk};opacity:.2;-webkit-mask:url(img/contours.svg) center/cover;mask:url(img/contours.svg) center/cover"></div>`,
+  const thumb=(nextMeta||latestMeta||{}).thumb,c3=await coverOf(nextMeta||latestMeta,true)||sampleCover(true);
+  const pv={'3d':`<img src="${c3.url}" alt="">`,skyline:`<div style="background:linear-gradient(${sky.top},${sky.hor})"></div>${mini}`,contours:`<div class="lines" style="background:${pal.bandInk};opacity:.2;-webkit-mask:url(img/contours.svg) center/cover;mask:url(img/contours.svg) center/cover"></div>`,
     map:thumb?`<img src="${thumb}" alt="">`:`<span class="pvnote">Plan a hike first</span>`,photo:photo?`<img src="${blobURL(box,photo)}" alt="">`:`<span class="pvnote">Choose a photo</span>`,plain:''};
   box.innerHTML=`<div class="cprev" aria-hidden="true"><div class="hero" id="cprev"></div></div>
 <section class="csec"><h3>Theme</h3><p>Colours for the header, the home screen and the buttons.</p><div class="themes">${LOOK.THEMES.map(t=>`<button class="tsw" data-k="theme" data-v="${t.id}" aria-pressed="${P.theme===t.id}" style="--b:${t.band};--a:${P.acc||t.acc}"><span class="blz"><i></i></span><b>${t.name}</b><small>${t.note}</small></button>`).join('')}</div></section>
@@ -196,7 +222,7 @@ async function renderPreview(){const el=$('#cprev');if(el)await renderHero(el,he
 $('#custom').addEventListener('click',async e=>{const b=e.target.closest('[data-k]');
   if(b){const k=b.dataset.k,v=b.dataset.v;if(k==='bg'&&v==='photo'&&!hasPhoto){$('#photoin').click();return}LOOK.set(k,v);renderCustom();return}
   if(e.target.closest('#cphoto')){$('#photoin').click();return}
-  if(e.target.closest('#cnophoto')){await HP.db.delBlob('app:photo').catch(()=>{});LOOK.set('bg','skyline');renderCustom();return}
+  if(e.target.closest('#cnophoto')){await HP.db.delBlob('app:photo').catch(()=>{});LOOK.set('bg','3d');renderCustom();return}
   if(e.target.closest('#creset')&&await ask('Go back to the original look? Your hikes stay as they are.',{ok:'Reset'})){LOOK.reset();renderCustom()}});
 $('#custom').addEventListener('change',e=>{const t=e.target,m={todtg:'tod',textg:'texture',tottg:'totals'}[t.id];
   if(m){LOOK.set(m,t.checked);renderCustom()}else if(t.id==='accpick'){LOOK.set('acc',t.value);renderCustom()}});
@@ -301,7 +327,7 @@ const metaOf=(D,thumb)=>{const R=D.route,n=R.d.length,L=R.d[n-1]||1,end=parseDay
   const hiE=near&&D.official&&D.official[near.name]?D.official[near.name]:R.e[hi];
   return{v:3,id:D.id,name:D.name,date:D.date,end:isoDay(end),days:D.days.length,km:+(+L).toFixed(2),up:D.days.reduce((s,d)=>s+d.up,0),created:D.created,updated:Date.now(),center:D.center,thumb,
     prof,hi:Math.round(hiE),hiFr:+(R.d[hi]/L).toFixed(4),hiName:near?near.name:'',nights:D.days.slice(0,-1).map(d=>+(R.d[d.i1]/L).toFixed(4)),fcd:fcDays(D),fcAt:D.fc?D.fc.issued:0,
-    wx:wxSummary(D),ensAt:D.ens?D.ens.issued:0,years:D.clim&&D.clim.years||null}};
+    wx:wxSummary(D),ensAt:D.ens?D.ens.issued:0,years:D.clim&&D.clim.years||null,cover:D.cover||''}};
 function wxSummary(D){try{const T=HP.wxTrip(D);return T?{src:T.src,pct:T.pct,days:T.days.map(x=>({d:x.d,src:x.src,pct:x.pct}))}:null}catch(e){return null}}
 // one line of weather per day for the home screen, from the hourly forecast along the route (walking hours)
 function fcDays(D){const F=D.fc;if(!F||!F.start||F.start.slice(0,10)!==D.date||!F.pts)return null;const out=[];
@@ -354,7 +380,7 @@ $('#sheet').addEventListener('click',async e=>{const sh=$('#sheet');if(e.target=
   if(act==='rename'){const v=await ask('Name of this hike',{input:D.name,ok:'Save'});if(v){D.name=v.slice(0,80);onPlanChange(D);await flushSave()}}
   else if(act==='gpx')exportGPX(D);
   else if(act==='forecast'){if(!navigator.onLine){HP.toast('No connection right now.');return}HP.viewer.updateForecast()}
-  else if(act==='delete'){if(await ask(`Delete “${D.name}” from this phone?`,{ok:'Delete',danger:true})){pending=null;clearTimeout(saveT);HP.viewer.close();viewId=null;cur='';await HP.db.remove(D.id);HP.toast('Hike deleted');replace('#/')}}});
+  else if(act==='delete'){if(await ask(`Delete “${D.name}” from this phone?`,{ok:'Delete',danger:true})){pending=null;clearTimeout(saveT);HP.viewer.close();viewId=null;cur='';await HP.db.remove(D.id);dropCovers(D.id);HP.toast('Hike deleted');replace('#/')}}});
 async function exportGPX(D){const R=D.route;
   const w=D.points.filter(p=>p.kind!=='high').map(p=>({lat:R.lat[p.i],lon:R.lon[p.i],name:p.name}));D.days.slice(0,-1).forEach(d=>{if(!D.points.some(p=>p.i===d.i1))w.push({lat:R.lat[d.i1],lon:R.lon[d.i1],name:`Night ${d.n}: ${d.to}`})});
   const gpx=HP.toGPX(D.name,R.lat,R.lon,R.e,w),fname=(D.name.replace(/[\\/:*?"<>|]+/g,'').trim().replace(/\s+/g,'-')||'hike')+'.gpx',file=new File([gpx],fname,{type:'application/gpx+xml'});

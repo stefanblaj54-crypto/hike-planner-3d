@@ -3,7 +3,7 @@
    Route, terrain, map, place and weather requests always go to the network.
    It opens instantly from that copy. Each time it opens or comes back to the screen it checks the app's own files
    and swaps in all changed ones at once, so a change on the website reaches the phone with no new VERSION. */
-const VERSION='hp3d-2026-11-20f';
+const VERSION='hp3d-2026-11-21a';
 const SHELL=[
   "./",
   "index.html",
@@ -24,6 +24,8 @@ const SHELL=[
   "icons/icon-512.png",
   "icons/icon-maskable-512.png",
   "img/contours.svg",
+  "img/sample-tall.jpg",
+  "img/sample-wide.jpg",
   "js/app.js",
   "js/build.js",
   "js/core.js",
