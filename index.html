@@ -103,17 +103,30 @@
       <dt>Map</dt><dd><a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA), from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> data and SRTM heights.</dd>
       <dt>Terrain heights</dt><dd>AWS Terrain Tiles (Mapzen), about 10 to 30 m resolution in the mountains. The light and the shade in hollows are worked out from them on your phone.</dd>
       <dt>Huts, passes, water, place names</dt><dd>OpenStreetMap, through Overpass and Nominatim.</dd>
-      <dt>Weather</dt><dd><a href="https://open-meteo.com">Open-Meteo</a>: the forecast from national weather models, and climate statistics from the ERA5 reanalysis.</dd>
+      <dt>Weather</dt><dd><a href="https://open-meteo.com">Open-Meteo</a>: the forecast from national weather models, with the wind near the ground and higher up, and climate statistics from the ERA5 reanalysis.</dd>
     </dl>
     <h3>Good to know</h3>
     <p><b>Likely weather.</b> Up to 15 days ahead, the chance of each weather type is the share of the 51 runs of the ECMWF forecast model that give it. Further ahead, it is how often each type happened at this place on these dates over the last 10 years (ERA5 weather records). Valley fog has no percentage, because both sources are too coarse to tell a foggy valley from the sunny ridge above it.</p>
     <p><b>Times</b> use the DIN 33466 hiking formula (4 km/h on the flat, 300 m/h up, 500 m/h down; the larger plus half the smaller), scaled by your pace, with 10 minutes' rest an hour if you choose rests. Bad weather adds rough allowances: 4–20% on wet ground, 25–70% on snow, more on ice, about 10% in thick cloud or strong gusts.</p>
     <p><b>Effort</b> is km-effort, as in trail running: each kilometre and each 100 m of climbing count 1. Under 15 is easy, 15–25 moderate, 25–35 hard, over 35 very hard. <b>Daylight</b> is the time left between your arrival and sunset on your tightest day: amber under an hour, red after dark.</p>
     <p><b>Weather types</b> are typical patterns, timed against your walk, using temperature statistics for this place and height. The <b>forecast</b> uses Open-Meteo's hourly forecast at points along the route; it appears 16 days before your start and updates when you open the hike with a connection.</p>
+    <p><b>Wind</b> starts from the forecast near the ground and higher up (about 1,500 and 3,000 m); for a weather type, it blows from where it did on such days in the ERA5 records for these dates. Your phone then lets it flow over the terrain: faster over crests and passes, sheltered behind them, turned along valleys, and with light breezes up the slopes by day and down them at night. It is a simple model, not a full weather simulation, so expect real gusts to vary more.</p>
+    <p><b>Best views</b> are found from the terrain alone: how far you can see, how high the mountains around you stand, how deep the valleys drop and which named summits are in clear sight. Clouds, forest and buildings are not counted. <b>First person</b> walks the route at true height, with the light and weather of the hour you would be there.</p>
+    <p><b>Inventory</b> keeps your own gear on this phone only. The packing advice names the first item of each kind, and uses general words where you have none.</p>
     <p><b>Difficulty</b> grades are OpenStreetMap's sac_scale tags (for routes drawn here); steepness is the slope of the path in degrees, averaged over about 200 m. Water points are springs and taps marked on OpenStreetMap; check that they run.</p>
     <p>Heights come from satellite data, so summits can read a little low. The plan is a guide: on the ground, follow the waymarks, check the national weather service, and turn back when conditions change.</p>
     <p class="mute small" id="ver"></p>
   </div>
+</section>
+
+<!-- inventory: the person's own gear -->
+<section class="screen" id="scr-inv" hidden>
+  <div class="inv" id="inv"></div>
+</section>
+
+<!-- a card's detail page, over the open hike -->
+<section class="screen" id="scr-detail" hidden>
+  <div class="detail" id="detail"></div>
 </section>
 
 <!-- viewer -->
@@ -132,6 +145,8 @@
       <div class="hint" id="hint"></div>
       <div class="north" id="north" aria-hidden="true"><span>N</span></div>
       <button class="reset" id="reset">Reset view</button>
+      <div class="fpcap" id="fpcap" role="status" hidden></div>
+      <div class="fpbar" id="fpbar" hidden><button class="fpb" id="fpplay" aria-label="Pause">❚❚</button><span class="fpinfo" id="fpinfo"></span><button class="fpb" id="fpspeed" aria-label="Speed">1×</button><button class="fpb" id="fpexit" aria-label="Leave first person"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
     </section>
     <p class="attrib" id="attrib" hidden>Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025)<span id="attrib-ch" hidden> · Aerial pictures © swisstopo</span></p>
     <div class="tools">
@@ -151,6 +166,7 @@
       <label><span class="micro">Pace</span><select id="pace"><option value="0.7">Fast</option><option value="0.85">Fit</option><option value="1">Average</option><option value="1.2">Heavy pack</option></select></label>
       <label class="ck" title="10 minutes' rest every hour"><input type="checkbox" id="breaks"><span class="micro">Rests</span></label>
       <button class="play" id="play">▶ Walk</button>
+      <button class="play ghost" id="fpbtn" aria-pressed="false" title="Walk the route at eye height"><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg>First person</button>
     </div>
     <div class="wbar">
       <span class="micro">Weather</span>
@@ -161,13 +177,15 @@
   </div>
   <!-- the plan in numbers and charts; each fact is shown once -->
   <div class="cards">
-    <section class="card" id="brief" aria-live="polite"></section>
-    <section class="card" id="wxcard"></section>
-    <section class="card wide"><div class="ch"><h2 class="micro">Profile</h2><span class="micro" id="profsub"></span></div>
+    <section class="card" id="brief" data-det="brief" tabindex="0" aria-live="polite"></section>
+    <section class="card" id="wxcard" data-det="wx" tabindex="0"></section>
+    <section class="card" id="windcard" data-det="wind" tabindex="0" hidden></section>
+    <section class="card" id="viewscard" data-det="views" tabindex="0" hidden></section>
+    <section class="card wide" data-det="profile" tabindex="0"><div class="ch"><h2 class="micro">Profile</h2><span class="micro" id="profsub"></span></div>
       <div class="fig"><svg id="prof" role="img" aria-label="Elevation profile with the weather"></svg></div><div class="plegend" id="plegend"></div></section>
-    <section class="card" id="dlcard"></section>
-    <section class="card" id="zcard"></section>
-    <section class="card wide"><div class="ch"><h2 class="micro">Days</h2></div>
+    <section class="card" id="dlcard" data-det="daylight" tabindex="0"></section>
+    <section class="card" id="zcard" data-det="steep" tabindex="0"></section>
+    <section class="card wide" data-det="days" tabindex="0"><div class="ch"><h2 class="micro">Days</h2></div>
       <div class="scroll"><table class="tbl" id="tbl"><thead><tr><th>Day</th><th class="n">km</th><th class="n">Up</th><th class="n">Down</th><th class="n">Top</th><th class="n">Walking</th><th class="n">Effort</th></tr></thead><tbody></tbody></table></div></section>
   </div>
   <p class="vsrc"><span id="vsrc"></span> <a href="#/about">How it is worked out</a></p>
@@ -181,6 +199,7 @@
     <button class="ditem" data-go="new"><svg viewBox="0 0 24 24"><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><path d="M7.5 16.5c3-1 1-5 4.5-6s4-2 4.5-2.5"/></svg>Plan a new hike</button>
     <button class="ditem" data-go="import"><svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19h14"/></svg>Import a route file</button>
     <button class="ditem" data-go="customize"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M12 3.5a8.5 8.5 0 0 0 0 17" fill="currentColor" stroke="none"/></svg>Customize</button>
+    <button class="ditem" data-go="inventory"><svg viewBox="0 0 24 24"><path d="M8 7V5.5A2.5 2.5 0 0 1 10.5 3h3A2.5 2.5 0 0 1 16 5.5V7"/><rect x="4.5" y="7" width="15" height="14" rx="3"/><path d="M4.5 12.5h15M10 12.5v2.5h4v-2.5"/></svg>Inventory</button>
     <button class="ditem" data-go="install" id="dinstall"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M12 7v7M9.5 11.5L12 14l2.5-2.5"/></svg>Install on your phone</button>
     <button class="ditem" data-go="about"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.6v.2"/></svg>About and data sources</button>
     <p class="dfoot" id="dfoot"></p>
@@ -197,6 +216,12 @@
   </div>
 </div>
 <div class="dialog" id="dialog" hidden><div class="dlgbox" role="dialog" aria-modal="true"><p id="dlgmsg"></p><input id="dlginput" hidden maxlength="80" aria-label="Name"><div class="dlgbtns"><button class="btn ghost" id="dlgno">Cancel</button><button class="btn primary" id="dlgok">OK</button></div></div></div>
+<div class="dialog" id="ied" hidden><form class="dlgbox iedbox" id="iedform" role="dialog" aria-modal="true" aria-labelledby="iedttl">
+  <h3 id="iedttl"></h3>
+  <label><span class="micro">Name</span><input id="iedname" maxlength="60" autocomplete="off" required></label>
+  <label><span class="micro">Weight in grams, if you know it</span><input id="iedg" type="number" inputmode="numeric" min="0" max="49999" step="1"></label>
+  <div class="dlgbtns"><button type="button" class="btn ghost small" id="ieddel">Delete</button><button type="button" class="btn ghost small" id="iedfirst">Use first</button><span class="sp"></span><button type="button" class="btn ghost" id="iedno">Cancel</button><button type="submit" class="btn primary" id="iedok">Save</button></div>
+</form></div>
 <div class="toast" id="toast" role="status" hidden></div>
 <input type="file" id="photoin" accept="image/*" class="vh" tabindex="-1" aria-hidden="true">
 

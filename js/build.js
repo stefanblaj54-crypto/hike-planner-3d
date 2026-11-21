@@ -128,7 +128,7 @@ HP.wxPct=cnt=>{const n=HP.WXK.reduce((s,k)=>s+(cnt[k]||0),0);if(!n)return null;c
   const o={};raw.forEach(r=>o[r.k]=r.f);return o};
 HP.fetchClimate=async function(lat,lon,zlo,zhi,signal){
   const y1=new Date().getFullYear()-1,y0=y1-9,L=lat.toFixed(4),O=lon.toFixed(4);
-  const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${L},${L}&longitude=${O},${O}&elevation=${Math.round(zlo)},${Math.round(zhi)}&start_date=${y0}-01-01&end_date=${y1}-12-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_hours,snowfall_sum,sunshine_duration,daylight_duration,wind_gusts_10m_max,weather_code&timezone=auto`;
+  const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${L},${L}&longitude=${O},${O}&elevation=${Math.round(zlo)},${Math.round(zhi)}&start_date=${y0}-01-01&end_date=${y1}-12-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_hours,snowfall_sum,sunshine_duration,daylight_duration,wind_gusts_10m_max,weather_code,wind_direction_10m_dominant,wind_speed_10m_max&timezone=auto`;
   const j=await HP.fetchJSON(url,{signal},90000),arr=Array.isArray(j)?j:[j];if(arr.length<2||!arr[0].daily)throw Error('No climate data');
   const m={};for(let k=1;k<=12;k++)m[k]={};
   arr.forEach((r,e)=>{const dd=r.daily,by={};dd.time.forEach((t,q)=>{const mo=+t.slice(5,7);(by[mo]||(by[mo]={x:[],n:[],p:[]}));if(dd.temperature_2m_max[q]!=null)by[mo].x.push(dd.temperature_2m_max[q]);if(dd.temperature_2m_min[q]!=null)by[mo].n.push(dd.temperature_2m_min[q]);if(dd.precipitation_sum[q]!=null)by[mo].p.push(dd.precipitation_sum[q])});
@@ -141,7 +141,22 @@ HP.fetchClimate=async function(lat,lon,zlo,zhi,signal){
   for(let q=0;q<H.time.length;q++){const p=v(H.precipitation_sum,q);if(p!==p){cls+='-';continue}
     const sf=k=>q-k>=0?(v(H.snowfall_sum,q-k)||0):0,dl=v(H.daylight_duration,q),sn=v(H.sunshine_duration,q);
     cls+=HP.WXT[HP.wxClass({p,ph:v(H.precipitation_hours,q)||0,sfPrev:sf(1)+sf(2),g:v(H.wind_gusts_10m_max,q)||0,sunF:dl>0&&sn===sn?sn/dl:null,cc:50,wc:v(H.weather_code,q)||0,warm:v(Lo.temperature_2m_max,q)>=17})].l}
-  return{src:`ERA5 reanalysis via Open-Meteo, ${y0}–${y1}`,z:[Math.round(zlo),Math.round(zhi)],tz:arr[0].timezone||null,m,cls,cls0:H.time[0],years:[y0,y1]}};
+  return{src:`ERA5 reanalysis via Open-Meteo, ${y0}–${y1}`,z:[Math.round(zlo),Math.round(zhi)],tz:arr[0].timezone||null,m,cls,cls0:H.time[0],years:[y0,y1],...windChars(H)}};
+// the wind of each day as two letters a day: the direction it mostly came from in 10° steps, and its strongest speed in 2 km/h steps
+function windChars(H){let wd='',ws='';const n=H.time.length;for(let q=0;q<n;q++){const d=(H.wind_direction_10m_dominant||[])[q],w=(H.wind_speed_10m_max||[])[q];
+  wd+=d==null?'-':String.fromCharCode(48+Math.round(d/10)%36);ws+=w==null?'-':String.fromCharCode(48+Math.min(74,Math.max(0,Math.round(w/2))))}
+  return /[^-]/.test(wd)?{wd,ws}:{}}
+// hikes saved before 1.8 get the wind of each day in their record once, with a connection
+HP.fetchClimWind=async function(clim,lat,lon,signal){if(!clim||!clim.years||!clim.cls)return null;const[y0,y1]=clim.years;
+  const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&elevation=${clim.z[1]}&start_date=${y0}-01-01&end_date=${y1}-12-31&daily=wind_direction_10m_dominant,wind_speed_10m_max&timezone=auto`;
+  const j=await HP.fetchJSON(url,{signal},90000),r=Array.isArray(j)?j[0]:j;if(!r||!r.daily||r.daily.time[0]!==clim.cls0)return null;const w=windChars(r.daily);return w.wd?w:null};
+// the wind on days of one weather type at this time of year: the direction it came from (averaged as arrows), how steady that was, and the usual strongest speed
+HP.climWind=(clim,date,key,half=30)=>{if(!clim||!clim.wd||!clim.cls)return null;const L=(HP.WXT[key]||{}).l;if(!L)return null;
+  const doy=d=>{const x=u.parseDay(d);return Math.round((x-new Date(x.getFullYear(),0,1))/864e5)},t=doy(date),c0=u.parseDay(clim.cls0);let su=0,sv=0,n=0;const sp=[];
+  for(let q=0;q<clim.cls.length;q++){if(clim.cls[q]!==L||clim.wd[q]==='-')continue;const x=new Date(c0.getFullYear(),c0.getMonth(),c0.getDate()+q),dy=Math.round((x-new Date(x.getFullYear(),0,1))/864e5);let dd=Math.abs(dy-t);dd=Math.min(dd,365-dd);if(dd>half)continue;
+    const a=(clim.wd.charCodeAt(q)-48)*10*Math.PI/180,w=clim.ws[q]==='-'?10:(clim.ws.charCodeAt(q)-48)*2;su+=Math.sin(a)*w;sv+=Math.cos(a)*w;sp.push(w);n++}
+  if(n<4)return null;sp.sort((a,b)=>a-b);const m=Math.hypot(su,sv)/sp.reduce((s,v)=>s+v,0);
+  return{dir:(Math.atan2(su,sv)*180/Math.PI+360)%360,steady:m,spd:sp[sp.length>>1],n}};
 // typical share of each type for a date: all days in the record within `half` days of that date in any year
 HP.climProbs=(clim,date,half=15)=>{if(!clim||!clim.cls)return null;const doy=d=>{const x=u.parseDay(d);return Math.round((x-new Date(x.getFullYear(),0,1))/864e5)};
   const t=doy(date),c0=u.parseDay(clim.cls0),cnt={};let n=0;
@@ -173,8 +188,8 @@ HP.roughClimate=function(lat,zlo,zhi){const m={};
   for(let k=1;k<=12;k++){const T0=10.5+10.5*Math.sin(2*Math.PI*(k-4.2)/12)-.55*(lat-45),at=z=>{const mean=T0-.006*z,r=9-2*Math.min(1,z/3000);return[mean+r/2,mean-r/2]},a=at(zlo),b=at(zhi),s=3.6,o={};
     o.tx=[a[0],b[0]];o.tn=[a[1],b[1]];for(const[key,f]of[['tx03',-1.9],['tx10',-1.28],['tx25',-.67],['tx75',.67],['tx90',1.28]])o[key]=[a[0]+f*s,b[0]+f*s];for(const[key,f]of[['tn10',-1.28],['tn25',-.67],['tn75',.67]])o[key]=[a[1]+f*s*.8,b[1]+f*s*.8];o.wet=[40,12];m[k]=o}
   return{src:'a rough estimate, because climate data could not be downloaded',z:[Math.round(zlo),Math.round(zhi)],tz:null,m,rough:true}};
-const FCV='temperature_2m,dew_point_2m,precipitation,snowfall,weather_code,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_speed_10m,wind_gusts_10m,wind_direction_10m,freezing_level_height,cape,visibility,snow_depth';
-const FCK={temperature_2m:'T',dew_point_2m:'Td',precipitation:'pr',snowfall:'sf',weather_code:'code',cloud_cover_low:'cl',cloud_cover_mid:'cm',cloud_cover_high:'ch',wind_speed_10m:'ws',wind_gusts_10m:'wg',wind_direction_10m:'wd',freezing_level_height:'fl',cape:'cape',visibility:'vis',snow_depth:'sd'};
+const FCV='temperature_2m,dew_point_2m,precipitation,snowfall,weather_code,cloud_cover_low,cloud_cover_mid,cloud_cover_high,wind_speed_10m,wind_gusts_10m,wind_direction_10m,freezing_level_height,cape,visibility,snow_depth,wind_speed_850hPa,wind_direction_850hPa,wind_speed_700hPa,wind_direction_700hPa,geopotential_height_850hPa,geopotential_height_700hPa';
+const FCK={temperature_2m:'T',dew_point_2m:'Td',precipitation:'pr',snowfall:'sf',weather_code:'code',cloud_cover_low:'cl',cloud_cover_mid:'cm',cloud_cover_high:'ch',wind_speed_10m:'ws',wind_gusts_10m:'wg',wind_direction_10m:'wd',freezing_level_height:'fl',cape:'cape',visibility:'vis',snow_depth:'sd',wind_speed_850hPa:'w8s',wind_direction_850hPa:'w8d',wind_speed_700hPa:'w7s',wind_direction_700hPa:'w7d',geopotential_height_850hPa:'z8',geopotential_height_700hPa:'z7'};
 HP.forecastWindow=date=>{const t=new Date();t.setHours(0,0,0,0);const d=u.parseDay(date),days=Math.round((d-t)/864e5);return{days,ok:days>=-1&&days<=15}};
 HP.fetchForecast=async function(D,signal){
   const set=new Set();for(const d of D.days){set.add(d.i0);let hi=d.i0;for(let i=d.i0;i<=d.i1;i++)if(D.route.e[i]>D.route.e[hi])hi=i;set.add(hi);set.add(d.i1)}

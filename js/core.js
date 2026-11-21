@@ -91,13 +91,33 @@ HP.download=(name,blob)=>{const a=document.createElement('a');a.href=URL.createO
 HP.tzOffset=(tz,date,lon)=>{try{if(tz){const p=new Intl.DateTimeFormat('en-US',{timeZone:tz,timeZoneName:'shortOffset'}).formatToParts(date).find(x=>x.type==='timeZoneName');const m=/GMT([+-]\d{1,2})(?::(\d\d))?/.exec(p?p.value:'');if(m)return +m[1]+(m[2]?Math.sign(+m[1]||1)*(+m[2])/60:0);if(p&&p.value==='GMT')return 0}}catch(e){}
   const base=Math.round((lon||0)/15),mo=date.getMonth();return base+(mo>=3&&mo<=9?1:0)};
 // sunrise and sunset in local clock hours for a date (the same sun model as the 3D view; 0.83° below the horizon for refraction)
-HP.sunTimes=(lat,lon,date,tz)=>{const d=typeof date==='string'?HP.u.parseDay(date):date,off=HP.tzOffset(tz,d,lon),n=Math.round((d-new Date(d.getFullYear(),0,0))/864e5),
+HP.sunTimes=(lat,lon,date,tz,alt=-.833)=>{const d=typeof date==='string'?HP.u.parseDay(date):date,off=HP.tzOffset(tz,d,lon),n=Math.round((d-new Date(d.getFullYear(),0,0))/864e5),
   B=2*Math.PI*(n-81)/364,eot=9.87*Math.sin(2*B)-7.53*Math.cos(B)-1.5*Math.sin(B),dec=23.44*Math.PI/180*Math.sin(2*Math.PI*(284+n)/365),L=lat*Math.PI/180,
-  noon=12+off-lon/15-eot/60,c=(Math.sin(-.833*Math.PI/180)-Math.sin(L)*Math.sin(dec))/(Math.cos(L)*Math.cos(dec));
+  noon=12+off-lon/15-eot/60,c=(Math.sin(alt*Math.PI/180)-Math.sin(L)*Math.sin(dec))/(Math.cos(L)*Math.cos(dec));
   if(c>=1)return{rise:noon,set:noon,noon,dark:true};if(c<=-1)return{rise:0,set:24,noon,light:true};const h=Math.acos(c)*180/Math.PI/15;return{rise:noon-h,set:noon+h,noon}};
 // effort of a day as km-effort (ITRA): 1 km of distance or 100 m of climbing each count 1
 HP.effort=(km,up)=>km+up/100;
 HP.effortWord=e=>e<15?'easy':e<25?'moderate':e<35?'hard':'very hard';
+// the 16 compass points, for the direction a wind comes from
+HP.compass=d=>['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'][Math.round(((d%360+360)%360)/22.5)%16];
+// the person's own gear, in kinds; the first item of a kind is the one the packing advice names. [key, label, the general word]
+HP.INVCAT=[
+  {g:'Clothing',k:[['shirt','T-shirt','T-shirt'],['base','Base layer','merino'],['fleece','Fleece or mid layer','fleece'],['shell','Shell jacket','waterproof'],['puffy','Warm jacket','warm jacket'],
+    ['trousers','Hiking trousers','hiking trousers'],['rainpants','Rain trousers','rain trousers'],['hat','Warm hat','hat'],['sunhat','Sun hat or cap','sun hat'],['gloves','Gloves','gloves'],['socks','Socks','hiking socks'],['gaiters','Gaiters','gaiters']]},
+  {g:'Footwear',k:[['boots','Boots or trail shoes','boots'],['spikes','Microspikes','microspikes']]},
+  {g:'Gear',k:[['pack','Backpack','backpack'],['liner','Pack liner','pack liner'],['poles','Poles','poles'],['headlamp','Headlamp','headlamp'],['water','Bottles or bladder','water bottles'],
+    ['firstaid','First-aid kit','first-aid kit'],['sunglasses','Sunglasses','sunglasses'],['nav','Map or GPS','map'],['power','Power bank','power bank']]},
+  {g:'For the nights',k:[['sleep','Sleeping bag or liner','sleeping-bag liner'],['tent','Tent','tent'],['mat','Sleeping mat','sleeping mat'],['stove','Stove','stove']]},
+  {g:'Always with me',k:[['other','Other things','']]}];
+HP.INVK=Object.fromEntries(HP.INVCAT.flatMap(g=>g.k.map(k=>[k[0],{label:k[1],word:k[2],g:g.g}])));
+HP.inv={
+  load(){try{const o=JSON.parse(localStorage.getItem('hp-inv')||'{}');return o&&o.items?o:{v:1,items:{}}}catch(e){return{v:1,items:{}}}},
+  save(o){try{localStorage.setItem('hp-inv',JSON.stringify(o))}catch(e){}},
+  items(k){const a=this.load().items[k];return Array.isArray(a)?a.filter(x=>x&&x.name):[]},
+  first(k){return this.items(k)[0]||null},
+  count(){const it=this.load().items;return Object.values(it).reduce((s,a)=>s+(Array.isArray(a)?a.length:0),0)},
+  // the person's item for a kind, marked as theirs, or the general word
+  word(k,fallback){const x=this.first(k),f=fallback!=null?fallback:(HP.INVK[k]||{}).word||k;return x?`<span class="own">${HP.u.esc(x.name)}</span>`:HP.u.esc(f)}};
 
 HP.toast=(msg,ms=3200)=>{const t=$('#toast');if(!t)return;t.textContent=msg;t.hidden=false;clearTimeout(t._h);t._h=setTimeout(()=>{t.hidden=true},ms)};
 })();

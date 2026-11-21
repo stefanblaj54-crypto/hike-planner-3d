@@ -31,8 +31,11 @@ def archive(url):
                 if r < acc: kind = kk; break
             p, ph, sunF, g, wc = {'fair': (0, 0, .82, 30, 1), 'storm': (6, 3, .55, 45, 95), 'front': (15, 10, .08, 55, 63), 'cloud': (.6, 2, .15, 35, 3), 'wind': (.4, 1, .62, 78, 2), 'snowy': (4, 6, .2, 40, 73)}[kind]
             dl = (12 + 3.6 * season) * 3600
+            # the wind of the day: where it mostly came from and its strongest speed, typical of the kind of day
+            wd0, ws0 = {'fair': (60, 14), 'storm': (225, 22), 'front': (250, 42), 'cloud': (300, 24), 'wind': (330, 58), 'snowy': (20, 30)}[kind]
+            wdir = (wd0 + rnd.gauss(0, 25)) % 360; wspd = max(3, ws0 + rnd.gauss(0, 6))
             vals = {'temperature_2m_max': round(tx, 1), 'temperature_2m_min': round(tn, 1), 'precipitation_sum': p, 'precipitation_hours': ph,
-                    'snowfall_sum': round(p * .7, 2) if tx < 1 else 0, 'sunshine_duration': round(sunF * dl), 'daylight_duration': round(dl), 'wind_gusts_10m_max': g, 'weather_code': wc}
+                    'snowfall_sum': round(p * .7, 2) if tx < 1 else 0, 'sunshine_duration': round(sunF * dl), 'daylight_duration': round(dl), 'wind_gusts_10m_max': g, 'weather_code': wc, 'wind_direction_10m_dominant': round(wdir), 'wind_speed_10m_max': round(wspd, 1)}
             D['time'].append(d.isoformat())
             for v in want: D[v].append(vals.get(v, 0))
             d += datetime.timedelta(days=1)
@@ -82,7 +85,8 @@ def forecast(url, tz="Europe/Zurich"):
     out = []
     for k, z in enumerate(zs):
         H = {v: [] for v in ["time", "temperature_2m", "dew_point_2m", "precipitation", "snowfall", "weather_code", "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
-                             "wind_speed_10m", "wind_gusts_10m", "wind_direction_10m", "freezing_level_height", "cape", "visibility", "snow_depth"]}
+                             "wind_speed_10m", "wind_gusts_10m", "wind_direction_10m", "freezing_level_height", "cape", "visibility", "snow_depth",
+                             "wind_speed_850hPa", "wind_direction_850hPa", "wind_speed_700hPa", "wind_direction_700hPa", "geopotential_height_850hPa", "geopotential_height_700hPa"]}
         for day in range(nd):
             date = d0 + datetime.timedelta(days=day)
             for h in range(24):
@@ -109,6 +113,10 @@ def forecast(url, tz="Europe/Zurich"):
                 H["cloud_cover_low"].append(cl); H["cloud_cover_mid"].append(cm); H["cloud_cover_high"].append(ch)
                 H["wind_speed_10m"].append(round(ws, 1)); H["wind_gusts_10m"].append(round(ws * 1.7, 1)); H["wind_direction_10m"].append(wd)
                 H["freezing_level_height"].append(round(fl)); H["cape"].append(cape); H["visibility"].append(vis); H["snow_depth"].append(sd)
+                # higher up the wind is stronger and turns clockwise with height, as it does over Europe
+                H["wind_speed_850hPa"].append(round(ws * 1.6, 1)); H["wind_direction_850hPa"].append((wd + 12) % 360)
+                H["wind_speed_700hPa"].append(round(ws * 2.1, 1)); H["wind_direction_700hPa"].append((wd + 24) % 360)
+                H["geopotential_height_850hPa"].append(1520); H["geopotential_height_700hPa"].append(3080)
         out.append({"latitude": float(lats[k]), "longitude": float(q['longitude'].split(',')[k]), "elevation": z, "timezone": tz, "hourly": H})
     return json.dumps(out if len(out) > 1 else out[0])
 

@@ -6,9 +6,9 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='1.7';
-const SCREENS=['home','new','build','view','custom','about'];
-let cur='',viewId=null,building=null,installEvt=null;
+const VERSION='1.8';
+const SCREENS=['home','new','build','view','custom','about','inv','detail'];
+let cur='',viewId=null,building=null,installEvt=null,pendingDet=null,pendingLook=null,viewScroll=0;
 
 /* ---------- navigation ---------- */
 function show(name,title){cur=name;SCREENS.forEach(s=>{$('#scr-'+s).hidden=s!==name});document.body.dataset.screen=name;
@@ -19,7 +19,8 @@ function go(hash){history.pushState({d:depth()+1},'',hash);route()}
 function replace(hash){history.replaceState({d:depth()},'',hash);route()}
 function back(){if(depth()>0)history.back();else replace('#/')}
 async function route(){
-  const h=location.hash.replace(/^#\/?/,''),target=h.startsWith('hike/')?'view':h==='new'?'new':h==='customize'?'custom':h==='about'?'about':'home';
+  const h=location.hash.replace(/^#\/?/,''),target=h.startsWith('hike/')?'view':h==='new'?'new':h==='customize'?'custom':h==='about'?'about':h==='inventory'?'inv':'home';
+  if(cur==='view'&&target==='view'&&decodeURIComponent(h.slice(5))===viewId){syncDetail();return}
   if(building&&target!=='new')cancelBuild();
   if(cur==='view'&&(target!=='view'||h.slice(5)!==viewId)){await flushSave();HP.viewer.close();viewId=null}
   if(updPending&&(target==='home'||target==='about')){try{sessionStorage.setItem('hp-upd',Date.now())}catch(e){}location.reload();return}
@@ -27,6 +28,7 @@ async function route(){
   if(target==='new'){if(cur!=='new'&&cur!=='build')openNew();return}
   if(target==='custom'){if(cur!=='custom'){show('custom','Customize');renderCustom()}return}
   if(target==='about'){show('about','About');$('#ver').textContent=`Version ${VERSION}`;return}
+  if(target==='inv'){if(cur!=='inv'){show('inv','Inventory');renderInv()}return}
   showHome()}
 addEventListener('popstate',route);
 $('#back').addEventListener('click',()=>{if(cur==='build'){cancelBuild();show('new','New hike');refreshNewMap();return}back()});
@@ -40,7 +42,7 @@ function ask(msg,{input=null,ok='OK',danger=false,cancel=true}={}){return new Pr
   const done=v=>{d.hidden=true;$('#dlgok').onclick=$('#dlgno').onclick=d.onclick=inp.onkeydown=null;res(v)};
   $('#dlgok').onclick=()=>done(input!==null?inp.value.trim():true);$('#dlgno').onclick=()=>done(null);
   d.onclick=e=>{if(e.target===d)done(null)};inp.onkeydown=e=>{if(e.key==='Enter')$('#dlgok').click()}})}
-addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#dialog').hidden)$('#dlgno').click();else if(!$('#drawer').hidden)closeDrawer();else if(!$('#sheet').hidden)$('#sheet').hidden=true});
+addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#ied').hidden)$('#iedno').click();else if(!$('#dialog').hidden)$('#dlgno').click();else if(!$('#drawer').hidden)closeDrawer();else if(!$('#sheet').hidden)$('#sheet').hidden=true});
 
 /* ---------- home: the next hike as a skyline, then the list ---------- */
 // sample skyline for an empty app: the Făgăraș ridge from Bâlea Lac to Vârful Moldoveanu (OpenStreetMap trail, SRTM heights)
@@ -55,9 +57,9 @@ let nextMeta=null,latestMeta=null,lastList=[],hasPhoto=false;const fcFail=new Se
 // the three dials of the next hike: the chance of fair weather, the effort of the hardest day, the daylight left on the tightest day
 const hmm=h=>`${Math.floor(h)}:${String(Math.round((h%1)*60)).padStart(2,'0')}`.replace(/(\d+):60/,(x,a)=>`${+a+1}:00`);
 function ringsOf(m){const R=[],pf=m.wx&&m.wx.pct?m.wx.pct.fair||0:null;
-  R.push(pf==null?{v:0,c:'var(--line)',val:'–',label:'Fair weather',aria:'Fair weather not known yet'}:{v:pf/100,c:pf>=55?'var(--good)':pf>=30?'var(--fair)':'var(--bad)',val:`${pf}<i>%</i>`,label:'Fair weather',aria:`Fair weather ${pf}%`});
-  if(m.eff!=null)R.push({v:Math.min(1,m.eff/45),c:'var(--eff)',val:Math.round(m.eff),unit:HP.effortWord(m.eff),label:'Effort',aria:`Effort ${Math.round(m.eff)}, ${HP.effortWord(m.eff)}`});
-  if(m.dl!=null){const x=m.dl;R.push({v:x<0?1:Math.max(.02,Math.min(1,x/5)),c:x>=1?'var(--good)':x>=0?'var(--fair)':'var(--bad)',val:(x<0?'−':'')+hmm(Math.abs(x)),unit:x<0?'after dark':'h spare',label:'Daylight',aria:x<0?`Arrive ${hmm(-x)} after dark`:`${hmm(x)} of daylight to spare`})}
+  R.push(pf==null?{v:0,c:'var(--line)',val:'–',label:'Fair weather',aria:'Fair weather not known yet'}:{v:pf/100,c:pf>=55?'var(--good)':pf>=30?'var(--fair)':'var(--bad)',val:`${pf}<i>%</i>`,label:'Fair weather',aria:`Fair weather ${pf}%`,det:'wx'});
+  if(m.eff!=null)R.push({v:Math.min(1,m.eff/45),c:'var(--eff)',val:Math.round(m.eff),unit:HP.effortWord(m.eff),label:'Effort',aria:`Effort ${Math.round(m.eff)}, ${HP.effortWord(m.eff)}`,det:'effort'});
+  if(m.dl!=null){const x=m.dl;R.push({v:x<0?1:Math.max(.02,Math.min(1,x/5)),c:x>=1?'var(--good)':x>=0?'var(--fair)':'var(--bad)',val:(x<0?'−':'')+hmm(Math.abs(x)),unit:x<0?'after dark':'h spare',label:'Daylight',aria:x<0?`Arrive ${hmm(-x)} after dark`:`${hmm(x)} of daylight to spare`,det:'daylight'})}
   return R}
 function heroModel(next,count){
   if(next){const n=daysTo(next.date),e=daysTo(next.end||next.date);
@@ -70,7 +72,7 @@ function heroModel(next,count){
     text:'Draw a route on the map or import a GPX file.',
     prof:SAMPLE.prof,pin:SAMPLE.pin,cap:SAMPLE.cap,nights:[],go:['draw','Draw a route'],alt:['import','Import a GPX file']}}
 const ring=r=>{const C=2*Math.PI*44,len=Math.max(0,Math.min(1,r.v))*C;
-  return`<div class="ring" role="img" aria-label="${esc(r.aria)}" style="--c:${r.c}"><div class="rd"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="trk" cx="50" cy="50" r="44"/><circle class="arc" cx="50" cy="50" r="44" stroke-dasharray="${len.toFixed(1)} ${C.toFixed(1)}"/></svg><div class="rv"><b>${r.val}</b>${r.unit?`<small>${esc(r.unit)}</small>`:''}</div></div><span class="micro">${esc(r.label)}</span></div>`};
+  return`<div class="ring"${r.det?` role="button" tabindex="0" data-det="${r.det}"`:' role="img"'} aria-label="${esc(r.aria)}" style="--c:${r.c}"><div class="rd"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="trk" cx="50" cy="50" r="44"/><circle class="arc" cx="50" cy="50" r="44" stroke-dasharray="${len.toFixed(1)} ${C.toFixed(1)}"/></svg><div class="rv"><b>${r.val}</b>${r.unit?`<small>${esc(r.unit)}</small>`:''}</div></div><span class="micro">${esc(r.label)}</span></div>`};
 function skyParts(model,mini){
   const pal=LOOK.pal(),sky=LOOK.sky();let h='';
   if(sky.night)h+=LOOK.stars(11);
@@ -153,8 +155,9 @@ async function renderList(up,past,list){const P=LOOK.get(),cards=P.list==='cards
   $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h micro">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'');
   const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Stored on this phone only. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © swisstopo':'')+'.':''}`}
 $('#hikes').addEventListener('click',e=>{const b=e.target.closest('.hike');if(b)go('#/hike/'+encodeURIComponent(b.dataset.id))});
-$('#hero').addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
+$('#hero').addEventListener('click',e=>{const r=e.target.closest('.ring[data-det]');if(r&&nextMeta){pendingDet=r.dataset.det;go('#/hike/'+encodeURIComponent(nextMeta.id));return}const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
   if(a==='open'&&nextMeta)go('#/hike/'+encodeURIComponent(nextMeta.id));else if(a==='new'||a==='draw'){go('#/new');setMode('draw')}else if(a==='import')startImport()});
+$('#hero').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('.ring[data-det]')){e.preventDefault();e.target.click()}});
 function startImport(){if(cur!=='new')go('#/new');setMode('file');$('#file').click()}
 async function backfill(ms){let ch=false;for(const m of ms){try{const D=await HP.db.plan(m.id);if(!D)continue;if(!D.id)D.id=m.id;await HP.db.putMeta(Object.assign(m,metaOf(D,m.thumb)));ch=true}catch(e){}}return ch}
 const fcBusy=new Set();
@@ -182,15 +185,36 @@ matchMedia('(min-width:900px)').addEventListener('change',()=>{if(cur==='home')r
 
 /* ---------- the menu ---------- */
 function openDrawer(){const d=$('#drawer');d.hidden=false;$('#menubtn').setAttribute('aria-expanded','true');
-  const here={home:'home',custom:'customize',about:'about'}[cur];$$('.ditem').forEach(b=>{if(b.dataset.go===here)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});
+  const here={home:'home',custom:'customize',about:'about',inv:'inventory'}[cur];$$('.ditem').forEach(b=>{if(b.dataset.go===here)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});
   $('#dinstall').hidden=standalone();storageNote();$('.ditem').focus()}
 function closeDrawer(){$('#drawer').hidden=true;$('#menubtn').setAttribute('aria-expanded','false');$('#menubtn').focus()}
 $('#menubtn').addEventListener('click',openDrawer);$('#dclose').addEventListener('click',closeDrawer);
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer'){closeDrawer();return}const b=e.target.closest('[data-go]');if(!b)return;const g=b.dataset.go;closeDrawer();
-  if(g==='home'){if(cur!=='home')go('#/')}else if(g==='new'){go('#/new');setMode('draw')}else if(g==='import')startImport();else if(g==='customize')go('#/customize');else if(g==='about')go('#/about');else if(g==='install')installNow()});
+  if(g==='home'){if(cur!=='home')go('#/')}else if(g==='new'){go('#/new');setMode('draw')}else if(g==='import')startImport();else if(g==='customize')go('#/customize');else if(g==='inventory')go('#/inventory');else if(g==='about')go('#/about');else if(g==='install')installNow()});
 async function storageNote(){const n=lastList.length;let t=n?`${n} ${n>1?'hikes':'hike'} saved on this phone`:'No hikes saved yet';
   try{const e=navigator.storage&&await navigator.storage.estimate();if(e&&e.usage&&n)t+=`, using ${(e.usage/1048576).toFixed(e.usage<10485760?1:0)} MB`}catch(x){}
   $('#dfoot').textContent=`${t}. Version ${VERSION}.`}
+
+/* ---------- Inventory: the person's own gear, named by the packing advice ---------- */
+const INVEX={shirt:'e.g. Patagonia Capilene Cool',base:'e.g. Icebreaker 200 Oasis',fleece:'e.g. Patagonia R1',shell:"e.g. Arc'teryx Beta AR",puffy:'e.g. Rab Microlight Alpine',trousers:'e.g. Fjällräven Keb',
+  rainpants:'e.g. Montane Minimus',hat:'e.g. Buff merino beanie',sunhat:'e.g. Outdoor Research Sun Runner',gloves:'e.g. Black Diamond Midweight',socks:'e.g. Darn Tough Hiker',gaiters:'e.g. Outdoor Research Rocky Mountain',
+  boots:'e.g. La Sportiva TX4 Mid GTX',spikes:'e.g. Kahtoola Microspikes',pack:'e.g. Osprey Talon 33',liner:'e.g. Sea to Summit pack liner',poles:'e.g. Black Diamond Trail',headlamp:'e.g. Petzl Actik Core',
+  water:'e.g. two 1 l bottles',firstaid:'e.g. Adventure Medical Kits Ultralight',sunglasses:'e.g. Julbo, category 3',nav:'e.g. Swisstopo app with offline maps',power:'e.g. Anker 10,000 mAh',
+  sleep:'e.g. silk sleeping-bag liner',tent:'e.g. MSR Hubba Hubba',mat:'e.g. Therm-a-Rest NeoAir',stove:'e.g. MSR PocketRocket',other:'e.g. whistle, knife, ID'};
+function renderInv(){const inv=HP.inv.load(),it=inv.items,cnt=HP.inv.count(),all=HP.INVCAT.reduce((s,g)=>s+g.k.length,0);let g0=0,kinds=0;
+  for(const k in it){const a=Array.isArray(it[k])?it[k]:[];if(a.length)kinds++;a.forEach(x=>{if(x&&x.g)g0+=+x.g})}
+  $('#inv').innerHTML=`<ul class="kpis ihead"><li><b>${cnt}</b><span>${cnt===1?'item':'items'}</span></li><li><b>${(g0/1000).toFixed(1)}</b><span>kg weighed</span></li><li><b>${kinds}<small>/${all}</small></b><span>kinds covered</span></li></ul>
+    <p class="small mute inote">Your own gear. Each hike's packing advice names it; where you have nothing, it uses general words. The first item of a kind is the one it names. Stored on this phone only.</p>`+
+    HP.INVCAT.map(g=>`<section class="igrp"><h2 class="micro">${esc(g.g)}</h2><div class="card ilist">${g.k.map(([k,label,word])=>{const a=(Array.isArray(it[k])?it[k]:[]).filter(x=>x&&x.name);
+      return`<div class="irow"><span class="ilbl">${esc(label)}</span><div class="ivals">${a.map((x,n)=>`<button class="ichip${n?'':' first'}" data-k="${k}" data-n="${n}"><span class="inm">${esc(x.name)}</span>${x.g?`<small>${nf.format(+x.g)} g</small>`:''}</button>`).join('')}${a.length||!word||word.toLowerCase()===label.toLowerCase()?'':`<span class="iword">${esc(word)}</span>`}<button class="iadd" data-k="${k}" aria-label="Add: ${esc(label)}">+</button></div></div>`}).join('')}</div></section>`).join('')}
+$('#inv').addEventListener('click',e=>{const b=e.target.closest('.ichip,.iadd');if(!b)return;editItem(b.dataset.k,b.classList.contains('iadd')?-1:+b.dataset.n)});
+function editItem(k,n){const inv=HP.inv.load(),a=(inv.items[k]=Array.isArray(inv.items[k])?inv.items[k]:[]),x=n>=0?a[n]:null,d=$('#ied'),K=HP.INVK[k];
+  $('#iedttl').textContent=K.label;$('#iedname').value=x?x.name:'';$('#iedname').placeholder=INVEX[k]||'';$('#iedg').value=x&&x.g?x.g:'';$('#ieddel').hidden=!x;$('#iedfirst').hidden=!x||n===0;d.hidden=false;$('#iedname').focus();
+  const done=act=>{d.hidden=true;$('#iedform').onsubmit=$('#iedno').onclick=$('#ieddel').onclick=$('#iedfirst').onclick=d.onclick=null;
+    if(act==='save'){const name=$('#iedname').value.trim().slice(0,60),g=Math.round(+$('#iedg').value)||0;if(!name)return;const o={name};if(g>0&&g<50000)o.g=g;if(x)a[n]=o;else a.push(o)}
+    else if(act==='del')a.splice(n,1);else if(act==='first'){a.splice(n,1);a.unshift(x)}else return;
+    if(!a.length)delete inv.items[k];HP.inv.save(inv);renderInv();HP.toast(act==='del'?'Removed':act==='first'?`${x.name} is now the first choice`:'Saved')};
+  $('#iedform').onsubmit=e=>{e.preventDefault();done('save')};$('#iedno').onclick=()=>done(null);$('#ieddel').onclick=()=>done('del');$('#iedfirst').onclick=()=>done('first');d.onclick=e=>{if(e.target===d)done(null)}}
 
 /* ---------- Customize ---------- */
 const BGS=[['3d','3D picture of your next hike'],['skyline','Skyline of your next hike'],['contours','Contour lines'],['map','Map of your hike'],['photo','Your photo'],['plain','Plain colour']];
@@ -380,7 +404,21 @@ addEventListener('visibilitychange',()=>{if(document.hidden)flushSave()});addEve
 async function openHike(id){if(cur==='view'&&viewId===id)return;
   let D,blobs;try{D=await HP.db.plan(id);if(D){blobs={};for(const k of['topo','relief','sat','dem'])blobs[k]=await HP.db.blob(id+':'+k)}}catch(e){HP.toast('This hike could not be read: '+e.message)}
   if(!D){HP.toast('This hike is no longer saved on this phone.');replace('#/');return}
-  if(!D.id)D.id=id;viewId=id;show('view',D.name);HP.viewer.open(D,blobs,onPlanChange)}
+  if(!D.id)D.id=id;viewId=id;show('view',D.name);HP.viewer.open(D,blobs,onPlanChange);if(pendingDet){const k=pendingDet;pendingDet=null;setTimeout(()=>openDetail(k),60)}}
+/* ---------- detail pages: a card's whole story, over the open hike; Back returns to the map ---------- */
+function openDetail(k){if(cur!=='view')return;history.pushState({d:depth()+1,det:k},'',location.hash);syncDetail()}
+HP.openDetail=openDetail;
+function syncDetail(){const k=history.state&&history.state.det,el=$('#scr-detail');
+  if(k&&cur==='view'){const r=HP.viewer.detail(k);if(!r){history.back();return}if(el.hidden)viewScroll=scrollY;$('#detail').innerHTML=r.html;$('#detail').dataset.k=k;el.hidden=false;$('#scr-view').hidden=true;$('#more').hidden=true;
+    $('#ttl').textContent=r.title;document.body.dataset.detail=k;window.scrollTo(0,0)}
+  else if(!el.hidden){el.hidden=true;$('#scr-view').hidden=false;$('#more').hidden=cur!=='view';const D=HP.viewer.current();if(cur==='view'&&D)$('#ttl').textContent=D.name;delete document.body.dataset.detail;const y=viewScroll,k=pendingLook;pendingLook=null;requestAnimationFrame(()=>{if(k!=null&&HP.viewer.look)HP.viewer.look(k,true);else window.scrollTo(0,y)})}}
+// a tap on a card opens its page; buttons, links, fields and the profile's own chart keep their own job
+$('#scr-view .cards').addEventListener('click',e=>{const c=e.target.closest('.card[data-det]');if(!c||e.target.closest('button,a,input,select,label,#prof'))return;openDetail(c.dataset.det)});
+$('#scr-view .cards').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('.card[data-det]')){e.preventDefault();openDetail(e.target.dataset.det)}});
+$('#detail').addEventListener('change',e=>{const t=e.target;if(!t.matches('[data-pack]'))return;HP.viewer.pack(t.dataset.pack,t.checked);
+  const sec=t.closest('.dsec'),all=sec.querySelectorAll('[data-pack]'),on=[...all].filter(x=>x.checked).length,lab=sec.querySelector('.ch span.micro');if(lab)lab.textContent=lab.textContent.replace(/^\d+\/\d+/,`${on}/${all.length-sec.querySelectorAll('[data-pack^="o:"]').length}`)});
+$('#detail').addEventListener('click',e=>{const b=e.target.closest('[data-dact]');if(!b)return;const a=b.dataset.dact;
+  if(a==='inv')go('#/inventory');else if(a.startsWith('look:')||a==='walk'){pendingLook=a==='walk'?-1:+a.slice(5);history.back()}});
 $('#more').addEventListener('click',()=>{$('#sheet').hidden=false;$('#sheet .row').focus()});
 $('#sheet').addEventListener('click',async e=>{const sh=$('#sheet');if(e.target===sh){sh.hidden=true;return}const b=e.target.closest('[data-act]');if(!b)return;sh.hidden=true;
   const D=HP.viewer.current();if(!D)return;const act=b.dataset.act;

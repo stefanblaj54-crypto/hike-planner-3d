@@ -105,12 +105,92 @@ function fcState(i,t){const key=FCP[i]+'|'+R.day[i]+'|'+Math.round(t*60);let s=W
   s.f=f;if(WXC.size>8000)WXC.clear();WXC.set(key,s);return s}
 function flPlain(t){const save=S.wx;S.wx='plain';const v=flAt(t);S.wx=save;return v}
 const stAt=(i,t)=>S.wx==='fc'?fcState(i,t):wst(t);
+/* ---------- wind: the forecast's own winds, or the records for a weather type, shaped by the terrain ---------- */
+// A layer of air between the ground and a lid flows around high ground, through gaps and over saddles: the smallest change to an
+// even wind that keeps the layer's mass (a mass-consistent model, as WindNinja uses). Its answers for an east and a north wind are
+// worked out once, under a low lid (calm, stable air goes round the hills) and a high one (mixed air goes over); any wind is a blend.
+// Near the ground the wind is weaker in hollows than on crests, and on calm days the slopes make their own breeze: up by day, down at night.
+let WF=null;const WFC=new Map();
+function windSetup(){
+  const{GC,GR,GS,ht}=TER,f=Math.max(1,Math.ceil(Math.max(GC,GR)/96)),nx=Math.ceil(GC/f),ny=Math.ceil(GR/f),cs=GS*f*MPP,n=nx*ny,z=new Float32Array(n);
+  for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){let s=0,c=0;for(let b=0;b<f;b++)for(let a=0;a<f;a++){const x=i*f+a,y=j*f+b;if(x<GC&&y<GR){s+=ht[y*GC+x];c++}}z[j*nx+i]=s/c}
+  const blur=(src,r)=>{const t=new Float32Array(n),o=new Float32Array(n),cl=(v,m)=>Math.min(m-1,Math.max(0,v));
+    for(let j=0;j<ny;j++){let a=0;for(let i=-r;i<=r;i++)a+=src[j*nx+cl(i,nx)];for(let i=0;i<nx;i++){t[j*nx+i]=a/(2*r+1);a+=src[j*nx+cl(i+r+1,nx)]-src[j*nx+cl(i-r,nx)]}}
+    for(let i=0;i<nx;i++){let a=0;for(let j=-r;j<=r;j++)a+=t[cl(j,ny)*nx+i];for(let j=0;j<ny;j++){o[j*nx+i]=a/(2*r+1);a+=t[cl(j+r+1,ny)*nx+i]-t[cl(j-r,ny)*nx+i]}}return o};
+  const rc=m=>Math.max(1,Math.round(m/cs)),zm=blur(z,rc(900)),zv=blur(blur(z,rc(600)),rc(600));let zmax=-1e9;for(let k=0;k<n;k++)zmax=Math.max(zmax,z[k]);
+  // exposure: how far a place stands above the ground around it, 0 deep in a hollow, 1 on a crest
+  const E=new Float32Array(n);for(let k=0;k<n;k++)E[k]=Math.min(1,Math.max(0,.5+(z[k]-zm[k])/360));
+  // the slope breeze's way: up the valley-sized slope (east and north parts), as strong as the slope is steep
+  const SE=new Float32Array(n),SN=new Float32Array(n);
+  for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){const k=j*nx+i,gx=(zv[j*nx+Math.min(nx-1,i+1)]-zv[j*nx+Math.max(0,i-1)])/(2*cs),gs=(zv[Math.min(ny-1,j+1)*nx+i]-zv[Math.max(0,j-1)*nx+i])/(2*cs),g=Math.hypot(gx,gs),m=Math.min(1,Math.atan(g)*57.3/14);
+    if(g>1e-4){SE[k]=gx/g*m;SN[k]=-gs/g*m}}
+  // both answers at once for one lid, with the layer's depth on each cell's four sides worked out first
+  // valleys: their axis (the way the ground curves least, east and north parts) and how much a valley holds the wind in it;
+  // slopes: which way is uphill and how steeply (for the speed-up on the windward side and the shelter in the lee)
+  const AE=new Float32Array(n),AN=new Float32Array(n),CH=new Float32Array(n),GE=new Float32Array(n),GN=new Float32Array(n),zs=blur(z,rc(250));
+  for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){const k=j*nx+i,iE=Math.min(nx-1,i+1),iW=Math.max(0,i-1),jS=Math.min(ny-1,j+1),jN=Math.max(0,j-1),q=(jj,ii)=>zv[jj*nx+ii];
+    const zxx=(q(j,iE)-2*q(j,i)+q(j,iW))/(cs*cs),zyy=(q(jS,i)-2*q(j,i)+q(jN,i))/(cs*cs),zxy=(q(jS,iE)-q(jS,iW)-q(jN,iE)+q(jN,iW))/(4*cs*cs),
+      tr=(zxx+zyy)/2,dt=Math.sqrt(Math.max(0,((zxx-zyy)/2)**2+zxy*zxy)),l1=tr+dt,l2=tr-dt;
+    // the axis is the direction of the smaller curvature; across a valley the ground curves up strongly
+    let ex=l1-zyy,ey=zxy;if(Math.abs(ex)+Math.abs(ey)<1e-12){ex=1;ey=0}const L=Math.hypot(ex,ey),ax=-ey/L,ay=ex/L;AE[k]=ax;AN[k]=-ay;
+    CH[k]=Math.min(1,Math.max(0,(l1-1.5e-4)/6e-4))*Math.min(1,Math.max(0,(l1-Math.max(0,l2))/(Math.abs(l1)+1e-9)))*Math.min(1,Math.max(0,(.62-E[k])/.35));
+    GE[k]=(zs[j*nx+iE]-zs[j*nx+iW])/((iE-iW)*cs);GN[k]=-(zs[jS*nx+i]-zs[jN*nx+i])/((jS-jN)*cs)}
+  const solve=lid=>{const h=new Float32Array(n);for(let k=0;k<n;k++)h[k]=Math.max(60,lid-z[k]);
+    const cE=new Float32Array(n),cW=new Float32Array(n),cS=new Float32Array(n),cN=new Float32Array(n),iv=new Float32Array(n),Le=new Float32Array(n),Ln=new Float32Array(n),re=new Float32Array(n),rn=new Float32Array(n);
+    for(let j=1;j<ny-1;j++)for(let i=1;i<nx-1;i++){const k=j*nx+i;cE[k]=(h[k]+h[k+1])/2;cW[k]=(h[k]+h[k-1])/2;cS[k]=(h[k]+h[k+nx])/2;cN[k]=(h[k]+h[k-nx])/2;iv[k]=1/(cE[k]+cW[k]+cS[k]+cN[k]);re[k]=cs*(cE[k]-cW[k]);rn[k]=-cs*(cS[k]-cN[k])}
+    for(let it=0;it<260;it++)for(let j=1;j<ny-1;j++)for(let i=1;i<nx-1;i++){const k=j*nx+i,a=cE[k],b=cW[k],c=cS[k],d=cN[k];
+      Le[k]+=1.9*((a*Le[k+1]+b*Le[k-1]+c*Le[k+nx]+d*Le[k-nx]+re[k])*iv[k]-Le[k]);Ln[k]+=1.9*((a*Ln[k+1]+b*Ln[k-1]+c*Ln[k+nx]+d*Ln[k-nx]+rn[k])*iv[k]-Ln[k])}
+    const out=[[new Float32Array(n),new Float32Array(n)],[new Float32Array(n),new Float32Array(n)]];
+    for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){const k=j*nx+i,kE=j*nx+Math.min(nx-1,i+1),kW=j*nx+Math.max(0,i-1),kS=Math.min(ny-1,j+1)*nx+i,kN=Math.max(0,j-1)*nx+i;
+      out[0][0][k]=1+(Le[kE]-Le[kW])/(2*cs);out[0][1][k]=-(Le[kS]-Le[kN])/(2*cs);out[1][0][k]=(Ln[kE]-Ln[kW])/(2*cs);out[1][1][k]=1-(Ln[kS]-Ln[kN])/(2*cs)}
+    return out};
+  const lo=zmax+900,hi=zmax+2500;
+  WF={nx,ny,f,E,SE,SN,AE,AN,CH,GE,GN,ridge:Math.max(GW.rmax,zmax*.6+GW.hmin*.4)+200,lo:solve(lo),hi:solve(hi)};WFC.clear()}
+// a value of one of the wind grids at a point of the map (px, py in the hike's pixels), smoothly
+function wfAt(a,px,py){const gx=Math.min(Math.max((px-.5)/(TER.GS*WF.f),0),WF.nx-1.001),gy=Math.min(Math.max((py-.5)/(TER.GS*WF.f),0),WF.ny-1.001),c=gx|0,r=gy|0,fx=gx-c,fy=gy-r,k=r*WF.nx+c;
+  return a[k]*(1-fx)*(1-fy)+a[k+1]*fx*(1-fy)+a[k+WF.nx]*(1-fx)*fy+a[k+WF.nx+1]*fx*fy}
+const vec=(spd,from)=>{const a=from*Math.PI/180;return[-spd*Math.sin(a),-spd*Math.cos(a)]};  // east and north parts of a wind coming from `from`
+// the wind for a day and time: above the hills (east, north, km/h), gustiness, how stable the air is, and the forecast's own winds near the ground
+function windBase(day,t){const key=S.wx+S.mon+'|'+day+'|'+Math.round(t*6)+'|'+(D.fc?D.fc.issued:0);let b=WFC.get(key);if(b)return b;const sn=sunAt(t,day),sunUp=sn.y>.05;
+  if(S.wx==='fc'&&D.fc){const F=D.fc,pts=[];let su=0,sv=0,sw=0,gf=0;
+    for(const fp of F.pts){const i=Math.min(Math.max(fp.i,DAYS[day-1].i0),DAYS[day-1].i1),H=fcH(i,t);if(H<0||H>F.n-1)continue;const a=Math.floor(H),w=H-a,q=Math.min(F.n-1,a+1),
+        g=k=>{const x=fp.h[k];if(!x||!x.length)return NaN;const va=x[a],vb=x[q];return va===va&&vb===vb?va+(vb-va)*w:va===va?va:vb},ang=k=>{const x=fp.h[k];return x&&x.length?(x[w<.5?a:q]):NaN};
+      const ws=g('ws'),wd=ang('wd');if(!(ws===ws&&wd===wd))continue;const v10=vec(ws,wd);pts.push({px:R.x[fp.i],py:R.y[fp.i],u:v10[0],v:v10[1],gf:Math.min(60,Math.max(ws*.25,(g('wg')||ws*1.5)-ws))});
+      // above the hills: between the 850 and 700 hPa winds at the height of the ridges; without them, the wind near the ground a little stronger
+      let up;const s8=g('w8s'),d8=ang('w8d'),s7=g('w7s'),d7=ang('w7d'),z8=g('z8')||1500,z7=g('z7')||3050;
+      if(s8===s8&&d8===d8){const a8=vec(s8,d8),a7=s7===s7&&d7===d7?vec(s7,d7):a8,k=Math.min(1,Math.max(0,(WF.ridge-z8)/Math.max(300,z7-z8)));up=[a8[0]+(a7[0]-a8[0])*k,a8[1]+(a7[1]-a8[1])*k]}
+      else up=[v10[0]*1.35,v10[1]*1.35];su+=up[0];sv+=up[1];sw++;gf+=pts[pts.length-1].gf}
+    if(sw){const st=fcState(DAYS[day-1].i0,t),stab=sunUp&&!st.fog?Math.min(1,Math.hypot(su,sv)/sw/30+.35*(st.sunAmt||0)):.15;
+      b={u:su/sw,v:sv/sw,gf:gf/sw,stab,pts,sunUp,sun:sunUp?Math.min(1,sn.y*2.5)*(fcState(DAYS[day-1].i0,t).sunAmt||0):0,src:'fc'}}}
+  if(!b){const sc=SCN[S.wx==='fc'?'fair':S.wx]||SCN.fair,w=sc.wind(WF.ridge,t),cw=HP.climWind(D.clim,`2001-${String(S.mon).padStart(2,'0')}-15`,S.wx==='fc'?'fair':S.wx),st=wst(t),
+      up=vec(w.v,cw?cw.dir:w.dir);b={u:up[0],v:up[1],gf:Math.max(0,w.g-w.v)*.85,stab:S.wx==='sea'||!sunUp?.15:S.wx==='fair'?.6:.9,pts:null,sunUp,sun:sunUp?Math.min(1,sn.y*2.5)*(st.sunAmt||0):0,src:cw?'clim':'type',clim:cw}}
+  // match the forecast near the ground: at each forecast point, how much stronger and turned the forecast is than this model nearby
+  if(b.pts){for(const p of b.pts){let mu=0,mv=0;for(let a=-1;a<=1;a++)for(let c=-1;c<=1;c++){const w=windRaw(b,p.px+a*1200/MPP,p.py+c*1200/MPP,10);mu+=w[0];mv+=w[1]}
+      const ms=Math.hypot(mu,mv)/9,ts=Math.hypot(p.u,p.v);p.r=Math.log(Math.min(3,Math.max(.3,(ts+1)/(ms+1))));let da=Math.atan2(p.u,p.v)-Math.atan2(mu,mv);da=Math.atan2(Math.sin(da),Math.cos(da));p.da=Math.max(-1.3,Math.min(1.3,da))}}
+  if(WFC.size>600)WFC.clear();WFC.set(key,b);return b}
+// the model's wind (east, north, km/h) before matching the forecast; agl: metres above the ground
+function windRaw(b,px,py,agl){const s=b.stab,lo=WF.lo,hi=WF.hi,f=(F,k)=>wfAt(F[0][k],px,py)*(1-s)+wfAt(F[1][k],px,py)*s;
+  let e=b.u*(wfAt(lo[0][0],px,py)*(1-s)+wfAt(hi[0][0],px,py)*s)+b.v*(wfAt(lo[1][0],px,py)*(1-s)+wfAt(hi[1][0],px,py)*s),
+      nn=b.u*(wfAt(lo[0][1],px,py)*(1-s)+wfAt(hi[0][1],px,py)*s)+b.v*(wfAt(lo[1][1],px,py)*(1-s)+wfAt(hi[1][1],px,py)*s);
+  const ex=wfAt(WF.E,px,py),k=1-Math.exp(-Math.max(0,agl-10)/280),near=(.48+.52*ex)*(1-k)+k;e*=near;nn*=near;
+  const sp=Math.hypot(e,nn);if(sp>.1&&k<.99){const up=(wfAt(WF.GE,px,py)*e+wfAt(WF.GN,px,py)*nn)/sp,ww=Math.min(1.3,Math.max(.65,1+.9*up));e*=1+(ww-1)*(1-k);nn*=1+(ww-1)*(1-k);
+    const c=wfAt(WF.CH,px,py)*(1-k);if(c>.02){let ax=wfAt(WF.AE,px,py),an=wfAt(WF.AN,px,py);const al=Math.hypot(ax,an)||1;ax/=al;an/=al;let d=(e*ax+nn*an)/Math.hypot(e,nn);if(d<0){ax=-ax;an=-an;d=-d}
+      const s2=Math.hypot(e,nn)*(.35+.65*d);e+=(ax*s2-e)*c;nn+=(an*s2-nn)*c}}
+  // the slope breeze, strongest when the wind above is light
+  const calm=Math.max(0,1-Math.hypot(b.u,b.v)/24)*(1-k);if(calm>0){const se=wfAt(WF.SE,px,py),sn=wfAt(WF.SN,px,py),A=b.sunUp?9*b.sun:-6;e+=se*A*calm;nn+=sn*A*calm}
+  return[e,nn,ex]}
+// the wind at a point of the map on a day and time: speed and gusts in km/h, the direction it comes from in degrees, and its east and north parts
+function windAt(px,py,day,t,agl=10){const b=windBase(day,t),w=windRaw(b,px,py,agl);let[e,nn]=w,gf=b.gf;
+  if(b.pts&&b.pts.length){let sw=0,r=0,da=0,g=0;for(const p of b.pts){const d2=((p.px-px)**2+(p.py-py)**2)*MPP*MPP,q=1/(d2+2.25e6);sw+=q;r+=p.r*q;da+=p.da*q;g+=p.gf*q}
+    r=Math.exp(r/sw);da/=sw;gf=g/sw;const c=Math.cos(da),s=Math.sin(da),e2=(e*c+nn*s)*r,n2=(-e*s+nn*c)*r;e=e2;nn=n2}
+  const v=Math.hypot(e,nn);return{v,g:v+gf*(.85+.3*w[2])*Math.min(1,.4+v/Math.max(8,Math.hypot(b.u,b.v))),dir:(Math.atan2(-e,-nn)*180/Math.PI+360)%360,e,n:nn}}
 function cond(i,t){
   const z=R.e[i],px=R.x[i],py=R.y[i],ex=EXPO?EXPO[i]:1,st=stAt(i,t),nz=(vnoise(px*.004,py*.004)-.5)*200;
   let T,v,g,dir,inC=false,fog=false,pr=0,thd=null,wet=!!st.wetAll,hail=false;
   if(S.wx==='fc'&&st.f){const f=st.f;T=f.T+(f.z-z)*.0065;v=(f.ws||0)*ex;g=Math.max(f.wg||0,v*1.3)*ex;dir=f.wd||0;pr=f.pr>.05?f.pr:0;
     if(f.code>=95)thd=1500;if(f.code===96||f.code===99)hail=true}
   else{const sc=SCN[S.wx==='fc'?'plain':S.wx],w=sc.wind(z,t);T=sc.T(z,t);v=w.v*ex;g=w.g*ex;dir=w.dir}
+  if(WF&&S.wx!=='plain'&&!(S.wx==='fc'&&!st.f)){const w=windAt(px,py,R.day[i],t);v=w.v;g=Math.max(w.g,v*1.15);dir=w.dir}
   if(S.wx!=='fc'&&st.cells)for(const c of st.cells){const d=Math.hypot(px-c.x,py-c.y)*MPP;
     T-=7*Math.exp(-((d/(c.R*1.7))**2))*c.Iw;const core=Math.exp(-((d/c.R)**2))*c.Ir;if(core>.03){pr=Math.max(pr,35*core);if(core>.5&&c.I>.6)hail=true}
     if(c.lit&&(thd===null||d<thd))thd=d;if(z>GW.cuBase()-400&&d<c.R*1.1&&c.I>.35)inC=true;g=Math.max(g,(20+60*c.I)*Math.exp(-((d/(c.R*2.6))**2)));if(c.age>.7&&d<c.R*2)wet=true}
@@ -162,7 +242,7 @@ function open(plan,blobs,cb){
     const a=Math.max(0,i-5),b=Math.min(N-1,i+5),deg=Math.atan(Math.abs(R.e[b]-R.e[a])/Math.max(1,(R.d[b]-R.d[a])*1000))*180/Math.PI,dr=Math.round(deg);SLOPE[i]=deg;STEEP[i]=dr<5?1:dr<10?2:dr<15?3:dr<20?4:5}
   if(D.fc){FCP=new Uint8Array(N);const fx=D.fc.pts.map(p=>p.i);for(let i=0;i<N;i++){let b=0,bd=1e9;fx.forEach((j,k)=>{const dd=Math.abs(R.d[j]-R.d[i]);if(dd<bd){bd=dd;b=k}});FCP[i]=b}}else FCP=null;
   if(S.wx==='fc'&&!fcUsable())S.wx='fair';if(!SCN[S.wx])S.wx='fair';
-  setupGeo();resetDays();
+  setupGeo();windSetup();resetDays();
   // controls
   $('#vname').textContent=D.name;$('#vdate').value=D.date;$('#start').value=S.start;$('#pace').value=String(S.pace);$('#breaks').checked=S.breaks;
   $('#mon').innerHTML=MONN.slice(1).map((m,k)=>`<option value="${k+1}">${m}</option>`).join('');$('#mon').value=String(S.mon);
@@ -184,7 +264,8 @@ function open(plan,blobs,cb){
   setupProfile(sig);
   $('#msg').hidden=false;$('#msg').textContent='Building the 3D view…';
   try{init3D(sig)}catch(err){$('#msg').hidden=false;$('#msg').textContent='The 3D view needs WebGL, which this browser could not start. The briefing, profile and table below still work.';console.error(err)}
-  const fw=HP.forecastWindow(D.date);if(fw.ok&&navigator.onLine&&(!D.fc||!D.ens||Date.now()-D.fc.issued>3*3600e3))updateForecast(false);
+  const fw=HP.forecastWindow(D.date);if(fw.ok&&navigator.onLine&&(!D.fc||!D.ens||Date.now()-D.fc.issued>3*3600e3||!D.fc.pts.some(p=>p.h.w8s&&p.h.w8s.length)))updateForecast(false);
+  if(D.clim&&!D.clim.rough&&!D.clim.wd&&navigator.onLine&&HP.fetchClimWind)HP.fetchClimWind(D.clim,D.center.lat,D.center.lon,AC.signal).then(w=>{if(!w||!R||!D.clim)return;Object.assign(D.clim,w);WFC.clear();WXC.clear();LKC.clear();refreshTimes();save()}).catch(()=>{});
   if(navigator.onLine&&D.clim&&!D.clim.cls)refreshClimate();
 }
 async function refreshClimate(){const plan=D,z=plan.clim.z||[plan.terr.min,plan.terr.max];
@@ -245,7 +326,7 @@ function updateReadout(){
    `<ul class="rstats"><li><b>${km.toFixed(1)}</b><span>km</span></li><li><b>${fmtClock(clock(i))}</b><span>time</span></li><li><b>${fmtH(walk(i)).replace(/ (min|h)/,'<small> $1</small>')}</b><span>walked</span></li>`+
    `<li><b style="color:${gc}">${sd<1?'0°':`${sd}° ${up?'↑':'↓'}`}</b><span>${D.sacKnown&&R.sac[i]?SACN[R.sac[i]].split(' ')[0]:'slope'}</span></li><li><b>${deg(c.T)}</b><span>${plain?'average':c.feels<c.T-1.5?`feels ${deg(c.feels)}`:'air'}</span></li></ul>`+
    `<p class="rn">${nx?`Next: ${esc(nx.name)} · ${fmtH(walk(nx.i)-walk(i))}`:'End of the day'}</p>`+
-   (plain?'':`<p class="rw">${skyWord(c,i,CLK[i])} · wind ${Math.round(c.v)} km/h ${DIRS[Math.round(c.dir/45)%8]}${gust}${tw?` · ${tw}`:''}</p>`)+night}
+   (plain?'':`<p class="rw">${skyWord(c,i,CLK[i])} · wind ${Math.round(c.v)} km/h from ${HP.compass(c.dir)}<i class="warr" data-to="${Math.round((c.dir+180)%360)}" aria-hidden="true"></i>${gust}${tw?` · ${tw}`:''}</p>`)+night}
 
 /* ---------- briefing ---------- */
 function placeName(i){const d=dayOf(i);let best=null,bd=1.2;for(const p of PTS){if(p.kind==='high')continue;if(R.day[p.i]!==d.n&&p.i!==d.i0-1)continue;const dd=Math.abs(R.d[p.i]-R.d[i]);if(dd<bd){bd=dd;best=p}}return best?best.name:`km ${(R.d[i]-R.d[d.i0]).toFixed(1)}`}
@@ -275,10 +356,8 @@ function dayBrief(d){
     if(!L.length)hz('ok','No weather problems on this day.')}
   const wq=(D.water||[]).filter(i=>i>=d.i0&&i<=d.i1).map(i=>R.d[i]-R.d[d.i0]).filter((v,k,a)=>!k||v-a[k-1]>.5);
   hz('water',wq.length?`Water at km ${wq.slice(0,8).map(v=>v.toFixed(1)).join(' · ')}${wq.length>8?' …':''}`:'No water on the way: carry it all.');
-  const f=cold.f,wetD=S.wx!=='storm'&&wetKm>.5,snowD=snowKm>.2&&S.wx==='snow',ex=[];
-  const wear=snowD?'merino, fleece, waterproofs, gaiters':wetD?'merino under the waterproof, rain trousers':f>=12?'T-shirt':f>=5?'T-shirt or merino, fleece at the top':f>=0?'merino, fleece and waterproof on top':'merino and fleece, waterproof over them';
-  if(!wetD&&!snowD)ex.push(f>=12?'fleece, waterproof':'waterproof');if(S.wx==='storm'||(S.wx==='fc'&&th))ex.push('rain trousers');if(f<5)ex.push('hat, gloves');if(f<0)ex.push('warm jacket');if(wetD)ex.push('pack liner, dry layers');if(hot.T>24)ex.push('2 l water, sun hat');
-  return `<div class="bday" style="--c:${d.color}"><h3 class="micro"><i></i>Day ${d.n} · ${esc(d.from)} → ${esc(d.to)}</h3><ul class="alerts">${L.join('')}</ul><dl class="kit"><dt class="micro">Wear</dt><dd>${wear}</dd>${ex.length?`<dt class="micro">Carry</dt><dd>${ex.join(', ')}</dd>`:''}</dl></div>`}
+  const K=kitOf(dayFacts(d));
+  return `<div class="bday" style="--c:${d.color}"><h3 class="micro"><i></i>Day ${d.n} · ${esc(d.from)} → ${esc(d.to)}</h3><ul class="alerts">${L.join('')}</ul><dl class="kit"><dt class="micro">Wear</dt><dd>${K.wear}</dd>${K.carry.length?`<dt class="micro">Carry</dt><dd>${K.carry.join(', ')}</dd>`:''}</dl></div>`}
 const pbar=(pc,lbl)=>{const ks=HP.WXK.filter(k=>pc[k]>0).sort((a,b)=>pc[b]-pc[a]);return`<div class="pbar" role="img" aria-label="${esc(lbl+': '+ks.map(k=>HP.WXT[k].name+' '+pc[k]+'%').join(', '))}">${ks.map(k=>`<i style="--c:${HP.WXT[k].c};flex:${pc[k]} 1 0"></i>`).join('')}</div>`};
 const hikeDate=n=>{const d=parseDay(D.date);d.setDate(d.getDate()+n-1);return d};
 function renderBrief(){if(!R)return;const sc=SCN[S.wx];
@@ -286,7 +365,7 @@ function renderBrief(){if(!R)return;const sc=SCN[S.wx];
 /* ---------- the cards: weather by day, daylight, steepness ---------- */
 const deg=v=>`${Math.round(v)}°`.replace('-','−');
 function tempRange(d){let lo=1e9,hi=-1e9;for(let i=d.i0;i<=d.i1;i+=3){const T=cond(i,CLK[i]).T;lo=Math.min(lo,T);hi=Math.max(hi,T)}return`${deg(hi)} / ${deg(lo)}`}
-function renderCards(){if(!R)return;renderWxCard();renderDaylight();renderZones()}
+function renderCards(){if(!R)return;renderWxCard();renderDaylight();renderZones();renderWindCard();renderViewsCard()}
 function renderWxCard(){const el=$('#wxcard'),L=likely(),pc=L&&L.pct,days=S.day?[DAYS[S.day-1]]:DAYS;
   const src=!L?'':L.src==='ens'?`${D.ens.members} forecast runs`:L.src==='mix'?'forecast runs and records':`records ${D.clim&&D.clim.years?D.clim.years.join('–'):''}`;
   let h=`<div class="ch"><h2 class="micro">Weather chance</h2><span class="micro">${esc(src)}</span></div>`;
@@ -305,6 +384,213 @@ function renderZones(){const el=$('#zcard'),[a,b]=profRange(),km=[0,0,0,0,0,0],g
   let h=`<div class="ch"><h2 class="micro">Steepness</h2><span class="micro">${S.day?`day ${S.day}`:'all days'}</span></div><div class="zones">`+[1,2,3,4,5].map(z=>`<div class="zr" style="--c:${STC[z]}"><span class="zn">${STN[z].split(', ')[1]}</span><span class="zb"><i style="width:${(tot?km[z]/tot*100:0).toFixed(1)}%"></i></span><span class="zv">${km[z].toFixed(1)} km</span></div>`).join('')+'</div>';
   if(D.sacKnown){const ks=[1,2,3,4,5,0].filter(k=>g[k]>.05);h+=`<div class="ch sub"><h3 class="micro">Path grade</h3></div><div class="pbar">${ks.map(k=>`<i style="--c:${SACC[k]};flex:${g[k]} 1 0"></i>`).join('')}</div><ul class="plist">${ks.map(k=>`<li title="${esc(SACN[k])}"><i style="--c:${SACC[k]}"></i><span>${SACS[k]}</span><b>${g[k].toFixed(1)} km</b></li>`).join('')}</ul>`}
   el.innerHTML=h}
+
+/* ---------- what to wear and carry: the person's own gear from the inventory, or general words ---------- */
+// The facts of a day that decide the kit: the coldest it feels, wet or snowy path, heat, storms, ice, arriving near dark, steep ground.
+function dayFacts(d){let f=99,hot=0,wetKm=0,snowKm=0,icy=false,th=false,steepKm=0;
+  for(let i=d.i0;i<=d.i1;i++){const c=cond(i,CLK[i]),seg=i<d.i1?R.d[i+1]-R.d[i]:0;f=Math.min(f,c.feels);hot=Math.max(hot,c.T);if(c.trail==='wet')wetKm+=seg;if(c.trail==='snow'||c.trail==='icy')snowKm+=seg;if(c.trail==='icy')icy=true;
+    if(c.thd!=null&&c.thd<8000)th=true;if(STEEP[i]>=4)steepKm+=seg}
+  const st=HP.sunTimes(D.center.lat,D.center.lon,hikeDate(d.n),D.tz),late=CLK[d.i1]>st.set-.5||CLK[d.i0]<st.rise;
+  return{f,hot,wetD:S.wx!=='storm'&&wetKm>.5,snowD:snowKm>.2&&S.wx==='snow',icy,th,late,steep:steepKm>.5,wetKm,snowKm}}
+function kitOf(x){const W=(k,w)=>HP.inv.word(k,w),f=x.f,wear=x.snowD?`${W('base','merino')}, ${W('fleece','fleece')}, ${W('shell','waterproofs')}, ${W('gaiters','gaiters')}`:
+    x.wetD?`${W('base','merino')} under ${W('shell','the waterproof')}, ${W('rainpants','rain trousers')}`:f>=12?W('shirt','T-shirt'):f>=5?`${W('shirt','T-shirt')} or ${W('base','merino')}, ${W('fleece','fleece')} at the top`:
+    f>=0?`${W('base','merino')}, ${W('fleece','fleece')} and ${W('shell','waterproof')} on top`:`${W('base','merino')} and ${W('fleece','fleece')}, ${W('shell','waterproof')} over them`,carry=[];
+  if(!x.wetD&&!x.snowD&&f>=5){if(f>=12)carry.push(W('fleece','fleece'));carry.push(W('shell','waterproof'))}
+  if(S.wx==='storm'||(S.wx==='fc'&&x.th))carry.push(W('rainpants','rain trousers'));if(f<5)carry.push(W('hat','hat'),W('gloves','gloves'));if(f<0)carry.push(W('puffy','warm jacket'));
+  if(x.wetD)carry.push(W('liner','pack liner'),'dry layers');if(x.hot>24)carry.push('2 l water',W('sunhat','sun hat'));if(x.icy)carry.push(W('spikes','microspikes'));
+  if(x.steep||x.wetD||x.snowD)carry.push(W('poles','poles'));if(x.late)carry.push(W('headlamp','headlamp'));return{wear,carry}}
+// the whole hike's packing list: the kinds of gear the days call for, plus what every hike needs and what the nights need
+function packList(){const days=DAYS.map(dayFacts),any=k=>days.some(x=>x[k]),minF=Math.min(...days.map(x=>x.f)),maxT=Math.max(...days.map(x=>x.hot)),plain=S.wx==='plain';
+  const L=[],add=(k,why)=>{if(!L.some(q=>q.k===k))L.push({k,why})};
+  add('boots','');add('socks','');add('trousers','');add('pack','');add('water','');add('shell','wind and rain, on every hike');
+  if(maxT>=12||plain)add('shirt','');if(minF<12||plain)add('base','');add('fleece','for stops and the top');
+  if(minF<5)add('hat',`feels ${tt(minF)} at the coldest`),add('gloves','');if(minF<0)add('puffy','for the cold and for stops');
+  if(any('wetD')||S.wx==='storm'||any('th'))add('rainpants','rain on the way');if(any('wetD'))add('liner','keeps spare clothes dry');if(any('snowD'))add('gaiters','snow on the path');if(any('icy'))add('spikes','ice on the path');
+  if(any('steep')||any('wetD')||any('snowD'))add('poles','steep or slippery ground');if(maxT>22||plain)add('sunhat',''),add('sunglasses','');else add('sunglasses','');
+  add('firstaid','');add('nav','');add('power','');if(any('late')||DAYS.length>1)add('headlamp',any('late')?'you walk near dark':'');
+  if(DAYS.length>1){const ks=DAYS.slice(0,-1).map(d=>{const p=PTS.find(q=>Math.abs(q.i-d.i1)<=3&&q.kind!=='high');return p?p.kind:'wild'});
+    if(ks.some(k=>k==='hut'||k==='village'||k==='shelter'))add('sleep','a liner for the hut');if(ks.some(k=>k==='camp'||k==='wild'))add('tent','a night out'),add('mat',''),add('sleep',''),add('stove','')}
+  return L}
+
+/* ---------- detail pages: tap a card for the whole story and what it means for the walk ---------- */
+const dHero=(v,u,l,c)=>`<div class="dhero"><b${c?` style="color:${c}"`:''}>${v}</b>${u?`<span>${u}</span>`:''}<p class="micro">${l}</p></div>`;
+const dKpis=a=>`<ul class="kpis dk">${a.map(([v,l])=>`<li><b>${v}</b><span>${l}</span></li>`).join('')}</ul>`;
+const dSec=(t,h,sub='')=>`<section class="dsec"><div class="ch"><h3 class="micro">${t}</h3>${sub?`<span class="micro">${sub}</span>`:''}</div>${h}</section>`;
+const dTips=a=>`<ul class="alerts">${a.map(([k,t])=>`<li class="al ${k}">${t}</li>`).join('')}</ul>`;
+const dMeans=a=>a.length?dSec('What it means for you',dTips(a)):'';
+const bearing=i=>{const a=Math.max(0,i-3),b=Math.min(N-1,i+3);return(Math.atan2(R.x[b]-R.x[a],-(R.y[b]-R.y[a]))*180/Math.PI+360)%360};
+const daysOf=()=>S.day?[DAYS[S.day-1]]:DAYS;
+// a small chart frame: x from 0 to X (km), y from 0 to Y; returns the SVG with grid lines and axis labels
+function chart(X,Y,body,{h=150,yl='',ys=[],xs=null}={}){const W=Math.round(Math.min(696,Math.max(280,(innerWidth||400)-66))),P={l:36,r:8,t:yl?30:16,b:22},x=v=>P.l+v/X*(W-P.l-P.r),y=v=>h-P.b-v/Y*(h-P.t-P.b);
+  const xt=xs||Array.from({length:Math.floor(X/(X>30?10:X>12?5:2))+1},(_,k)=>k*(X>30?10:X>12?5:2));
+  return`<svg class="dchart" viewBox="0 0 ${W} ${h}" width="${W}" height="${h}" role="img">${ys.map(v=>`<line x1="${P.l}" x2="${W-P.r}" y1="${y(v)}" y2="${y(v)}" class="gl"/><text x="${P.l-6}" y="${y(v)+3.5}" text-anchor="end">${v}</text>`).join('')}
+    ${xt.filter(v=>x(v)<W-P.r-24).map(v=>`<text x="${x(v)}" y="${h-6}" text-anchor="middle">${v}</text>`).join('')}<text x="${W-P.r}" y="${h-6}" text-anchor="end" class="u">km</text>${yl?`<text x="${P.l-6}" y="${P.t-17}" text-anchor="end" class="u">${yl}</text>`:''}${body(x,y)}</svg>`}
+
+// the wind along the walk, at your walking time: speed, gusts, where it comes from, and how much of it is in your face
+function windStats(d){const o={pts:[],max:{g:0},sumV:0,n:0,head:0,strong:0,tt:0,feel:{f:99},rose:new Float32Array(16),roseV:new Float32Array(16)};
+  for(let i=d.i0;i<=d.i1;i+=2){const c=cond(i,CLK[i]),dt=Math.max(0,CLK[Math.min(d.i1,i+2)]-CLK[i]),b=bearing(i)*Math.PI/180,w=vec(c.v,c.dir),hw=-(w[0]*Math.sin(b)+w[1]*Math.cos(b));
+    o.pts.push({km:R.d[i]-R.d[d.i0],v:c.v,g:c.g,dir:c.dir,i});if(c.g>o.max.g)o.max={g:c.g,i};o.sumV+=c.v*dt;o.tt+=dt;if(hw>8)o.head+=dt;if(c.g>=50)o.strong+=dt;if(c.feels<o.feel.f)o.feel={f:c.feels,T:c.T,i};
+    const s=Math.round(c.dir/22.5)%16;o.rose[s]+=dt;o.roseV[s]+=c.v*dt}
+  o.mean=o.tt?o.sumV/o.tt:0;let su=0,sv=0;o.pts.forEach(p=>{const w=vec(p.v,p.dir);su-=w[0];sv-=w[1]});o.from=(Math.atan2(su,sv)*180/Math.PI+360)%360;return o}
+const arrowPath=(cx,cy,to,s=7)=>{const a=to*Math.PI/180,dx=Math.sin(a),dy=-Math.cos(a),px=-dy,py=dx;
+  return`<path d="M${(cx-dx*s).toFixed(1)} ${(cy-dy*s).toFixed(1)}L${(cx+dx*s).toFixed(1)} ${(cy+dy*s).toFixed(1)}M${(cx+dx*s-dx*4+px*3).toFixed(1)} ${(cy+dy*s-dy*4+py*3).toFixed(1)}L${(cx+dx*s).toFixed(1)} ${(cy+dy*s).toFixed(1)}L${(cx+dx*s-dx*4-px*3).toFixed(1)} ${(cy+dy*s-dy*4-py*3).toFixed(1)}" class="wa"/>`};
+function windChart(d,o){const X=Math.max(1,R.d[d.i1]-R.d[d.i0]),Y=Math.max(40,Math.ceil(Math.max(...o.pts.map(p=>p.g))/10)*10+10),ys=[0,Y/2,Y].map(Math.round);
+  return chart(X,Y,(x,y)=>{const g=o.pts.map(p=>`${x(p.km).toFixed(1)},${y(p.g).toFixed(1)}`).join(' '),v=o.pts.map(p=>`${x(p.km).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+    let ar='';const step=Math.max(1,Math.round(o.pts.length/14));for(let k=0;k<o.pts.length;k+=step){const p=o.pts[k];ar+=arrowPath(x(p.km),y(Y)+9,(p.dir+180)%360)}
+    return`${Y>50?`<line x1="${x(0)}" x2="${x(X)}" y1="${y(50)}" y2="${y(50)}" class="lim"/>`:''}<polygon points="${x(0)},${y(0)} ${g} ${x(o.pts[o.pts.length-1].km)},${y(0)}" class="ga"/><polyline points="${v}" class="vl"/>${ar}`},{h:170,yl:'km/h',ys})}
+function windRose(o){const tot=o.rose.reduce((s,v)=>s+v,0)||1,mx=Math.max(...o.rose)/tot||1,C=90,R0=12,R1=78;let p='';
+  for(let s=0;s<16;s++){const f=o.rose[s]/tot;if(f<=0)continue;const r=R0+(R1-R0)*f/mx,a0=(s*22.5-10)*Math.PI/180,a1=(s*22.5+10)*Math.PI/180,mv=o.roseV[s]/o.rose[s];
+    p+=`<path d="M${C+R0*Math.sin(a0)} ${C-R0*Math.cos(a0)}L${C+r*Math.sin(a0)} ${C-r*Math.cos(a0)}A${r} ${r} 0 0 1 ${C+r*Math.sin(a1)} ${C-r*Math.cos(a1)}L${C+R0*Math.sin(a1)} ${C-R0*Math.cos(a1)}A${R0} ${R0} 0 0 0 ${C+R0*Math.sin(a0)} ${C-R0*Math.cos(a0)}Z" style="fill:var(${mv>=40?'--bad':mv>=20?'--fair':'--eff'})"/>`}
+  return`<svg class="rose" viewBox="0 0 180 180" role="img" aria-label="Where the wind comes from"><circle cx="${C}" cy="${C}" r="${R1}" class="rg"/><circle cx="${C}" cy="${C}" r="${(R0+R1)/2}" class="rg"/>${p}${['N','E','S','W'].map((t,k)=>`<text x="${C+86*Math.sin(k*Math.PI/2)}" y="${C-86*Math.cos(k*Math.PI/2)+4}" text-anchor="middle">${t}</text>`).join('')}</svg>`}
+const windSrc=()=>{const b=WF&&windBase(1,12);if(S.wx==='fc'&&D.fc){const up=D.fc.pts.some(p=>p.h.w8s&&p.h.w8s.some(v=>v===v));return`Open-Meteo forecast: the wind near the ground at ${D.fc.pts.length} points on the route${up?' and higher up, at about 1,500 and 3,000 m,':''} shaped by the terrain on your phone.`}
+  if(b&&b.clim)return`Where the wind comes from: ${b.clim.n} days like this in the ERA5 weather records, ${D.clim.years.join('–')}. Shaped by the terrain on your phone.`;return'Typical wind for this weather type, shaped by the terrain on your phone.'};
+function renderWindCard(){const el=$('#windcard');if(!el)return;if(S.wx==='plain'||!WF){el.hidden=true;return}el.hidden=false;
+  const ds=daysOf(),os=ds.map(windStats),mx=os.reduce((a,o,k)=>o.max.g>a.g?{g:o.max.g,i:o.max.i}:a,{g:0}),ttot=os.reduce((s,o)=>s+o.tt,0)||1,head=os.reduce((s,o)=>s+o.head,0)/ttot,
+    mean=os.reduce((s,o)=>s+o.mean*o.tt,0)/ttot,from=os[0].from,gc=mx.g>=70?'var(--bad)':mx.g>=50?'var(--fair)':'var(--good)';
+  el.innerHTML=`<div class="ch"><h2 class="micro">Wind</h2><span class="micro">on the walk</span></div>`+
+    `<ul class="kpis"><li><b style="color:${gc}">${Math.round(mx.g/5)*5}</b><span>gust km/h</span></li><li><b>${Math.round(mean)}</b><span>average</span></li><li><b>${HP.compass(from)}<i class="warr st" style="transform:rotate(${(from+180)%360}deg)"></i></b><span>wind from</span></li><li><b>${Math.round(head*100)}%</b><span>headwind</span></li></ul>`+
+    (ds.length===1?`<div class="dfig">${windChart(ds[0],os[0])}</div>`:`<div class="dfig">${windChart(ds[0],os[0])}</div><p class="micro wsub">Day 1 · the other days in the detail</p>`)}
+
+function detail(kind){if(!R)return null;const ds=daysOf(),sub=S.day?`Day ${S.day}`:DAYS.length>1?'All days':'';
+  if(kind==='views')return viewsDetail();
+  if(kind==='wind'){if(!WF||S.wx==='plain')return null;const os=ds.map(windStats),all=os.reduce((a,o,k)=>o.max.g>a.g?{g:o.max.g,i:o.max.i}:a,{g:0}),ttot=os.reduce((s,o)=>s+o.tt,0)||1;
+    const head=os.reduce((s,o)=>s+o.head,0)/ttot,strong=os.reduce((s,o)=>s+o.strong,0),feel=os.reduce((a,o)=>o.feel.f<a.f?o.feel:a,{f:99}),mean=os.reduce((s,o)=>s+o.mean*o.tt,0)/ttot,rose={rose:new Float32Array(16),roseV:new Float32Array(16)};
+    os.forEach(o=>{for(let s=0;s<16;s++){rose.rose[s]+=o.rose[s];rose.roseV[s]+=o.roseV[s]}});let su=0,sv=0;os.forEach(o=>{const w=vec(1,o.from);su-=w[0]*o.tt;sv-=w[1]*o.tt});const from=(Math.atan2(su,sv)*180/Math.PI+360)%360;
+    const gc=all.g>=70?'var(--bad)':all.g>=50?'var(--fair)':'var(--good)',M=[];
+    // stretches with strong gusts
+    const ex=[];ds.forEach((d,k)=>{let cur=null;for(const p of os[k].pts){if(p.g>=50){if(!cur)cur={d,a:p,b:p,g:p.g};else{cur.b=p;cur.g=Math.max(cur.g,p.g)}}else if(cur){ex.push(cur);cur=null}}if(cur)ex.push(cur)});
+    if(all.g<35)M.push(['ok','Light wind all the way: nothing to plan for.']);
+    else if(all.g<50)M.push(['ok',`Breezy, gusts to ${Math.round(all.g/5)*5} km/h at ${esc(placeName(all.i))}: a windproof layer for the stops is enough.`]);
+    else if(all.g<70)M.push(['warn',`Gusts to ${Math.round(all.g/5)*5} km/h at ${esc(placeName(all.i))} around ${fmtClock(CLK[all.i])}: on the crest keep a low, wide stance and pack loose things away.`]);
+    else M.push(['bad',`Gusts over 70 km/h at ${esc(placeName(all.i))} can push you off balance: keep off exposed crests, chains and ladders while it blows, or take a lower path.`]);
+    if(feel.f<feel.T-4)M.push(['warn',`The wind makes ${tt(feel.T)} feel like ${tt(feel.f)} at ${esc(placeName(feel.i))}: put the shell on before you get cold, not after.`]);
+    if(head>.35)M.push(['info',`Headwind on ${Math.round(head*100)}% of the walk: it tires you more, so take the climbs slower and eat a little more.`]);
+    M.push(['info','In deep valleys the wind follows the valley; on passes and crests it is strongest. The trails on the 3D map show how it flows over the ground.']);
+    return{title:'Wind',html:dHero(Math.round(all.g/5)*5,'km/h',`Strongest gust · ${esc(placeName(all.i))} · ${fmtClock(CLK[all.i])}`,gc)+
+      dKpis([[Math.round(mean),'average km/h'],[HP.compass(from),'mostly from'],[`${Math.round(head*100)}%`,'headwind'],[fmtH(strong),'gusts over 50']])+
+      ds.map((d,k)=>dSec(`Day ${d.n} · ${esc(d.from)} → ${esc(d.to)}`,`<div class="dfig">${windChart(d,os[k])}</div><p class="dleg"><span><i class="lsw ga"></i>gusts</span><span><i class="lsw vl"></i>wind</span><span><i class="lsw lim"></i>50 km/h</span><span>arrows: where it blows</span></p>`)).join('')+
+      dSec('Where it comes from',`<div class="rosewrap">${windRose(rose)}<p class="small mute">Share of your walking time with wind from each direction. Blue under 20 km/h, amber to 40, red above.</p></div>`)+
+      (ex.length?dSec('Strong gusts',`<ul class="dlist">${ex.slice(0,8).map(q=>`<li><b>Day ${q.d.n} · km ${q.a.km.toFixed(1)}${q.b.km.toFixed(1)!==q.a.km.toFixed(1)?`–${q.b.km.toFixed(1)}`:''}</b><span>${esc(placeName(q.a.i))} · ${fmtClock(CLK[q.a.i])} · to ${Math.round(q.g/5)*5} km/h</span></li>`).join('')}</ul>`):'')+
+      dMeans(M)+`<p class="dsrc">${windSrc()}</p>`}}
+  if(kind==='brief'){const all=DAYS.map(d=>dayBrief(d)).join(''),nAl=(all.match(/class="al (warn|bad)"/g)||[]).length,L=packList(),P=D.packed||{},items=HP.inv,nInv=items.count();
+    let wsum=0,wn=0;const rows=L.map(q=>{const it=items.first(q.k),K=HP.INVK[q.k];if(it&&it.g){wsum+=+it.g;wn++}return`<li><label><input type="checkbox" data-pack="${q.k}"${P[q.k]?' checked':''}><span class="pk"><b>${K.label}</b>${it||q.why?`<span>${[it?`<span class="own">${esc(it.name)}</span>`:'',q.why?esc(q.why):''].filter(Boolean).join(' · ')}</span>`:''}</span>${it&&it.g?`<span class="pw">${nf.format(+it.g)} g</span>`:''}</label></li>`});
+    const others=items.items('other').map(it=>{if(it.g){wsum+=+it.g;wn++}return`<li><label><input type="checkbox" data-pack="o:${esc(it.name)}"${P['o:'+it.name]?' checked':''}><span class="pk"><b>${esc(it.name)}</b><span>always with you</span></span>${it.g?`<span class="pw">${nf.format(+it.g)} g</span>`:''}</label></li>`});
+    const done=L.filter(q=>P[q.k]).length;
+    return{title:'Alerts and kit',html:dHero(nAl||'0',nAl===1?'alert':'alerts',nAl?'to plan for on this hike':'nothing to plan for on this hike',nAl?'var(--fair)':'var(--good)')+
+      dSec('Day by day',`<div class="dbrief">${all}</div>`)+
+      dSec('Packing list',`<ul class="pack">${rows.join('')}${others.join('')}<li class="gen"><span>Also: food for the day and a snack for later, sunscreen, phone, ID and some cash for huts.</span></li></ul>`,`${done}/${L.length} packed${wn?` · ${(wsum/1000).toFixed(1)} kg known`:''}`)+
+      dMeans([...(nInv?[]:[['info','Add your own gear in <button class="lnk" data-dact="inv">Inventory</button> and this list and the advice above will name it.']]),['info','The list follows the weather you chose above the map: switch to the forecast or a weather type and it changes. Tick things off as you pack.']])}}
+  if(kind==='wx'){const L=likely(),pc=L&&L.pct;if(!pc)return{title:'Weather chance',html:`<p class="mute">Not known yet: open the hike with a connection.</p>`};
+    const ks=HP.WXK.filter(k=>pc[k]>0).sort((a,b)=>pc[b]-pc[a]),top=ks[0],M=[];
+    const MEAN={fair:'Settled: sun, small clouds on the summits later, light wind.',storm:'Hot and humid, thunderstorms from early afternoon: be over passes and crests by about 13:00.',front:'Rain most of the day, cloud on the slopes and colder: waterproofs on, paths slippery.',
+      cloud:'Grey, cloud sitting on the slopes: little view, damp, follow the waymarks closely.',wind:'Clear and cold after a front, strong gusts on ridges: windproof layer, keep off exposed crests in the strongest gusts.',snow:'Fresh snow up high after a cold snap: icy and slippery above the snow line; not beginner terrain.'};
+    if((pc.storm||0)>=20)M.push(['warn',`Storms in ${pc.storm}% of cases: start early and plan to be off high ground by early afternoon.`]);
+    if((pc.front||0)>=25)M.push(['warn',`Rain in ${pc.front}% of cases: keep a shorter or lower plan B ready.`]);
+    if((pc.snow||0)>=8)M.push(['bad',`Snow in ${pc.snow}% of cases: check the conditions up high before you go.`]);
+    if((pc.fair||0)>=55)M.push(['ok',`Fair in ${pc.fair}% of cases: a good chance of a dry day. Sun protection.`]);
+    const src=L.src==='ens'?`${D.ens.members} runs of the ECMWF forecast model`:L.src==='mix'?'forecast runs for the near days, weather records for the others':`days like this in the ERA5 weather records, ${D.clim&&D.clim.years?D.clim.years.join('–'):''}`;
+    let hourly='';if(S.wx==='fc'&&D.fc){const d=ds[0],hs=[];for(let h=Math.ceil(CLK[d.i0]);h<=Math.floor(CLK[d.i1])&&hs.length<14;h++){let i=d.i0;while(i<d.i1&&CLK[i]<h)i++;const c=cond(i,h);hs.push({h,c,i})}
+      if(hs.length)hourly=dSec(`Hour by hour · day ${d.n}`,`<div class="scroll"><table class="tbl hrs"><thead><tr><th>Time</th><th>Where</th><th class="n">Air</th><th class="n">Rain mm</th><th class="n">Wind km/h</th></tr></thead><tbody>${hs.map(q=>`<tr><td>${fmtClock(q.h)}</td><td>${esc(placeName(q.i))}</td><td class="n">${deg(q.c.T)}</td><td class="n">${q.c.pr>.05?q.c.pr.toFixed(1):'–'}</td><td class="n">${Math.round(q.c.v)} ${HP.compass(q.c.dir)}</td></tr>`).join('')}</tbody></table></div>`,'at your walking time')}
+    return{title:'Weather chance',html:dHero(pc[top],'%',`${esc(HP.WXT[top].name)} · the most likely`,HP.WXT[top].c)+
+      ds.map(d=>{const Ld=HP.wxDay(D,d.n-1),p=Ld&&Ld.pct;return dSec(`Day ${d.n} · ${fmtDate(isoDay(hikeDate(d.n)))}`,p?`${pbar(p,'Day '+d.n)}<ul class="plist wide">${HP.WXK.filter(k=>p[k]>0).sort((a,b)=>p[b]-p[a]).map(k=>`<li><i style="--c:${HP.WXT[k].c}"></i><span>${HP.WXT[k].name}</span><b>${p[k]}%</b></li>`).join('')}</ul><p class="small mute">Temperature on the walk ${tempRange(d)}</p>`:'<p class="mute small">Not known.</p>')}).join('')+
+      hourly+dSec('What each type means',`<ul class="dlist">${ks.map(k=>`<li><b><i class="dot" style="--c:${HP.WXT[k].c}"></i>${HP.WXT[k].name} · ${pc[k]}%</b><span>${MEAN[k]}</span></li>`).join('')}</ul>`)+dMeans(M)+`<p class="dsrc">From ${src}.</p>`}}
+  if(kind==='daylight'){const rows=ds.map(d=>{const dt=hikeDate(d.n),st=HP.sunTimes(D.center.lat,D.center.lon,dt,D.tz),cv=HP.sunTimes(D.center.lat,D.center.lon,dt,D.tz,-6),a=CLK[d.i0],b=CLK[d.i1],m=st.set-b;
+      return{d,st,cv,a,b,m,latest:st.set-1-(b-a)}});const tight=rows.reduce((x,r)=>r.m<x.m?r:x,rows[0]),c=tight.m>=1?'var(--good)':tight.m>=0?'var(--fair)':'var(--bad)',M=[];
+    rows.forEach(r=>{if(r.m<0)M.push(['bad',`Day ${r.d.n}: you arrive ${fmtH(-r.m)} after sunset. Start by <b>${fmtClock(Math.max(4,r.latest))}</b>${r.latest<5?', or shorten the day: it is longer than the daylight':''}.`]);else if(r.m<1)M.push(['warn',`Day ${r.d.n}: only ${fmtH(r.m)} of daylight to spare. Starting by ${fmtClock(r.latest)} leaves an hour.`])});
+    if(rows.some(r=>r.m<1))M.push(['info',`After sunset there is about ${fmtH(rows[0].cv.set-rows[0].st.set)} of twilight, then you need a headlamp: keep it at the top of the pack.`]);
+    if(!M.length)M.push(['ok','Plenty of daylight every day: time for long breaks and the views.']);
+    const H0=Math.max(3,Math.floor(Math.min(...rows.map(r=>Math.min(r.cv.rise,r.a)))-1)),H1=Math.min(23,Math.ceil(Math.max(...rows.map(r=>Math.max(r.cv.set,r.b)))+1)),X=h=>((Math.min(H1,Math.max(H0,h))-H0)/(H1-H0)*100).toFixed(2);
+    const bars=rows.map(r=>`<div class="dlr big"><span class="dn" style="--c:${r.d.color}"><i></i>${r.d.n}</span><div class="dlt"><i class="tw" style="left:${X(r.cv.rise)}%;width:${X(r.cv.set)-X(r.cv.rise)}%"></i><i class="sky" style="left:${X(r.st.rise)}%;width:${X(r.st.set)-X(r.st.rise)}%"></i><i class="walk" style="left:${X(r.a)}%;width:${Math.max(1,Math.min(X(r.b),X(r.st.set))-X(r.a))}%;--c:${r.d.color}"></i>${r.b>r.st.set?`<i class="walk dark" style="left:${X(Math.max(r.a,r.st.set))}%;width:${Math.max(1,X(r.b)-X(Math.max(r.a,r.st.set)))}%"></i>`:''}<i class="set" style="left:${X(r.st.set)}%"></i></div><span class="mg" style="color:${r.m>=1?'var(--good)':r.m>=0?'var(--fair)':'var(--bad)'}">${r.m<0?'−':'+'}${fmtH(Math.abs(r.m))}</span></div>`).join('');
+    return{title:'Daylight',html:dHero((tight.m<0?'−':'+')+fmtH(Math.abs(tight.m)),'',tight.m<0?`after dark on day ${tight.d.n}`:`to spare on the tightest day, day ${tight.d.n}`,c)+
+      dSec('The days',`<div class="dlrows">${bars}</div><p class="dleg"><span><i class="lsw tw"></i>twilight</span><span><i class="lsw sky"></i>daylight</span><span><i class="lsw walk" style="background:${rows.length>1?`linear-gradient(90deg,${rows.map(r=>r.d.color).join(',')})`:rows[0].d.color}"></i>walking</span><span><i class="lsw dark"></i>after dark</span></p>`,`${String(H0).padStart(2,'0')}:00 – ${String(H1).padStart(2,'0')}:00`)+
+      dSec('Times',`<table class="tbl dlt2"><thead><tr><th></th><th class="n">Dawn</th><th class="n">Sunrise</th><th class="n">Arrive</th><th class="n">Sunset</th><th class="n">Dusk</th></tr></thead><tbody>${rows.map(r=>`<tr><td><span class="dn" style="--c:${r.d.color}"><i></i>${r.d.n}</span></td><td class="n">${fmtClock(r.cv.rise)}</td><td class="n">${fmtClock(r.st.rise)}</td><td class="n"${r.m<0?' style="color:var(--bad)"':''}>${fmtClock(r.b)}</td><td class="n">${fmtClock(r.st.set)}</td><td class="n">${fmtClock(r.cv.set)}</td></tr>`).join('')}</tbody></table>`,`start ${fmtClock(rows[0].a)}`)+
+      dMeans(M)+`<p class="dsrc">Sunrise and sunset at the hike's centre; first and last light when the sun is 6° below the horizon. Your times include the walking pace and rests you chose.</p>`}}
+  if(kind==='steep'){const[a,b]=profRange(),km=[0,0,0,0,0,0],tm=[0,0,0,0,0,0],g=[0,0,0,0,0,0];let tot=0,mx={s:0,i:a};
+    for(let i=a;i<b;i++){const s=R.d[i+1]-R.d[i];km[STEEP[i]]+=s;tm[STEEP[i]]+=Math.max(0,WALK[i+1]-WALK[i]);g[R.sac[i]]+=s;tot+=s;if(SLOPE[i]>mx.s)mx={s:SLOPE[i],i}}
+    const secs=[],used=new Uint8Array(N);for(let it=0;it<5;it++){let bi=-1,bs=0;for(let i=a;i<b;i++)if(!used[i]&&SLOPE[i]>bs){bs=SLOPE[i];bi=i}if(bi<0||bs<8)break;let lo=bi,hi=bi;while(lo>a&&SLOPE[lo-1]>bs-4)lo--;while(hi<b-1&&SLOPE[hi+1]>bs-4)hi++;for(let i=Math.max(a,lo-20);i<=Math.min(b,hi+20);i++)used[i]=1;secs.push({lo,hi,s:bs,up:R.e[hi]>R.e[lo]})}
+    const M=[];if(km[5]>.1)M.push(['bad',`${km[5].toFixed(1)} km steeper than 20°: hands may help, and it is slow and tiring downhill. Not for wet or icy days without experience.`]);
+    if(km[4]+km[5]>.5)M.push(['warn',`${(km[4]+km[5]).toFixed(1)} km over 15°: poles save your knees on the way down; short steps, weight over your feet.`]);
+    M.push(['info','Steepness is measured over about 200 m of path, so a short step can be steeper than shown.']);
+    return{title:'Steepness',html:dHero(Math.round(mx.s)+'°','',`Steepest stretch · ${esc(placeName(mx.i))}`,STC[STEEP[mx.i]])+
+      dSec('Bands',`<div class="zones">${[1,2,3,4,5].map(z=>`<div class="zr" style="--c:${STC[z]}"><span class="zn">${STN[z].split(', ')[1]}</span><span class="zb"><i style="width:${(tot?km[z]/tot*100:0).toFixed(1)}%"></i></span><span class="zv">${km[z].toFixed(1)} km</span><span class="zt">${fmtH(tm[z])}</span></div>`).join('')}</div>`,sub)+
+      (secs.length?dSec('The steepest stretches',`<ul class="dlist">${secs.map(q=>`<li><b>${Math.round(q.s)}° ${q.up?'up':'down'} · km ${(R.d[q.lo]-R.d[dayOf(q.lo).i0]).toFixed(1)}</b><span>Day ${R.day[q.lo]} · ${esc(placeName(q.lo))} · about ${fmtClock(CLK[q.lo])}</span></li>`).join('')}</ul>`):'')+
+      (D.sacKnown?dSec('Path grades',`<ul class="dlist">${[1,2,3,4,5,0].filter(k=>g[k]>.05).map(k=>`<li><b><i class="dot" style="--c:${SACC[k]}"></i>${SACS[k]} · ${g[k].toFixed(1)} km</b><span>${esc(SACN[k])}</span></li>`).join('')}</ul>`,'Swiss Alpine Club scale'):'')+dMeans(M)}}
+  if(kind==='profile'){const[a,b]=profRange();let up=0,dn=0,hi={e:-1e9},lo={e:1e9};for(let i=a;i<b;i++){const dz=R.e[i+1]-R.e[i];if(dz>0)up+=dz;else dn-=dz}for(let i=a;i<=b;i++){if(R.e[i]>hi.e)hi={e:R.e[i],i};if(R.e[i]<lo.e)lo={e:R.e[i],i}}
+    // climbs: rises of 150 m or more, allowing dips of up to 40 m on the way
+    const cl=[];for(const d of DAYS){const a0=Math.max(a,d.i0),b0=Math.min(b,d.i1);if(b0<=a0)continue;let mn=a0,mxI=a0;
+      for(let i=a0+1;i<=b0;i++){if(R.e[i]<R.e[mn]&&R.e[mxI]-R.e[mn]<150){mn=i;mxI=i;continue}if(R.e[i]>R.e[mxI])mxI=i;if(R.e[mxI]-R.e[i]>40||i===b0){if(R.e[mxI]-R.e[mn]>=150)cl.push({a:mn,b:mxI});mn=i;mxI=i}}}
+    const X=R.d[b]-R.d[a],Y0=Math.floor(lo.e/200)*200,Y1=Math.ceil(hi.e/200)*200,step=Math.max(1,Math.floor((b-a)/300));let pts='';
+    const svg=chart(X,Y1-Y0,(x,y)=>{let p='';for(let i=a;i<b;i+=step){const j=Math.min(b,i+step);p+=`<polygon points="${x(R.d[i]-R.d[a])},${y(0)} ${x(R.d[i]-R.d[a])},${y(R.e[i]-Y0)} ${x(R.d[j]-R.d[a])},${y(R.e[j]-Y0)} ${x(R.d[j]-R.d[a])},${y(0)}" style="fill:${STC[STEEP[i]]}"/>`}return p+`<text x="${x(R.d[hi.i]-R.d[a])}" y="${y(hi.e-Y0)-6}" text-anchor="middle" class="u">${nf.format(Math.round(hi.e))} m</text>`},{h:190,yl:'m',ys:[0,(Y1-Y0)/2,Y1-Y0].map(Math.round)}).replace(/(<text x="[\d.]+" y="[\d.]+" text-anchor="end">)(\d+)(<\/text>)/g,(m,p1,v,p3)=>p1+nf.format(+v+Y0)+p3);
+    const M=[];if(cl.length){const h=cl.reduce((x,c)=>R.e[c.b]-R.e[c.a]>R.e[x.b]-R.e[x.a]?c:x,cl[0]),g=R.e[h.b]-R.e[h.a],t=WALK[h.b]-WALK[h.a];
+      M.push(['info',`The biggest climb is ${nf.format(Math.round(g))} m to ${esc(placeName(h.b))}, about ${fmtH(t)}: start it at a pace where you can still talk, and ${t>1?'drink a little every half hour on the way up':'drink before you start'}.`])}
+    if(dn>up*1.2)M.push(['warn',`More down than up (${nf.format(Math.round(dn))} m): descents tire the knees and thighs; poles and short steps help.`]);
+    return{title:'Profile',html:dHero(nf.format(Math.round(up)),'m up',sub||'the whole hike')+dKpis([[nf.format(Math.round(dn)),'m down'],[nf.format(Math.round(hi.e)),'m top'],[nf.format(Math.round(lo.e)),'m lowest'],[X.toFixed(1),'km']])+
+      dSec('Height and steepness',`<div class="dfig">${svg}</div><p class="dleg">${[1,2,3,4,5].map(z=>`<span><i class="lsw" style="background:${STC[z]}"></i>${STN[z].split(', ')[1]}</span>`).join('')}</p>`)+
+      (cl.length?dSec('The climbs',`<ul class="dlist">${cl.map(c=>{const g=R.e[c.b]-R.e[c.a],L=R.d[c.b]-R.d[c.a],av=Math.atan(g/Math.max(1,L*1000))*180/Math.PI;let mx=0;for(let i=c.a;i<c.b;i++)mx=Math.max(mx,SLOPE[i]);
+        return`<li><b>+${nf.format(Math.round(g))} m · ${L.toFixed(1)} km · ${Math.round(av)}°, up to ${Math.round(mx)}°</b><span>Day ${R.day[c.a]} · to ${esc(placeName(c.b))} · ${fmtClock(CLK[c.a])}–${fmtClock(CLK[c.b])}</span></li>`}).join('')}</ul>`):'')+dMeans(M)}}
+  if(kind==='days'||kind==='effort'){const rows=DAYS.map(d=>{let up=0,dn=0,top=-1e9;for(let i=d.i0;i<d.i1;i++){const dz=R.e[i+1]-R.e[i];if(dz>0)up+=dz;else dn-=dz;top=Math.max(top,R.e[i])}const km=R.d[d.i1]-R.d[d.i0],e=HP.effort(km,up),h=WALK[d.i1],
+      x=dayFacts(d),water=Math.max(1,Math.round((h*.45+Math.max(0,x.hot-18)*.06*h+up/1000*.3)*2)/2),wq=(D.water||[]).filter(i=>i>=d.i0&&i<=d.i1).length,stops=PTS.filter(p=>p.i>d.i0+3&&p.i<d.i1-3&&(p.kind==='hut'||p.kind==='village')).map(p=>p.name);
+      return{d,km,up,dn,top,e,h,water,wq,stops}});
+    const hard=rows.reduce((a,r)=>r.e>a.e?r:a,rows[0]),M=[];const word=HP.effortWord(hard.e);
+    if(hard.e>=35)M.push(['bad',`Day ${hard.d.n} is very hard (${Math.round(hard.e)}): only with training for long mountain days. Splitting it would help.`]);else if(hard.e>=25)M.push(['warn',`Day ${hard.d.n} is hard (${Math.round(hard.e)}): eat something every hour and keep the pace steady from the start.`]);
+    else M.push(['ok',`The hardest day is ${word} (${Math.round(hard.e)}): fine for a fit beginner with breaks.`]);
+    rows.forEach(r=>{if(r.h>10)M.push(['warn',`Day ${r.d.n}: ${fmtH(r.h)} of walking. ${r.stops.length?`A night at ${esc(r.stops[Math.floor(r.stops.length/2)])} would split it.`:'Consider splitting it.'}`])});
+    M.push(['info','Water is a rough guide: about half a litre an hour, more in heat and on long climbs. Refill where the water points are.']);
+    const scale=`<div class="escale"><i style="--c:var(--good);flex:15"></i><i style="--c:var(--eff);flex:10"></i><i style="--c:var(--fair);flex:10"></i><i style="--c:var(--bad);flex:10"></i></div><p class="dleg">0 · easy 15 · moderate 25 · hard 35 · very hard</p>`;
+    return{title:kind==='effort'?'Effort':'Days',html:dHero(Math.round(hard.e),word,`Effort of the hardest day, day ${hard.d.n}`,'var(--eff)')+
+      dSec('Effort by day',`${rows.map(r=>`<div class="ebar"><span class="dn" style="--c:${r.d.color}"><i></i>${r.d.n}</span><span class="eb"><i style="width:${Math.min(100,r.e/45*100).toFixed(1)}%;--c:${r.e>=35?'var(--bad)':r.e>=25?'var(--fair)':r.e>=15?'var(--eff)':'var(--good)'}"></i></span><b>${Math.round(r.e)}</b></div>`).join('')}${scale}`,'km-effort')+
+      rows.map(r=>dSec(`Day ${r.d.n} · ${esc(r.d.from)} → ${esc(r.d.to)}`,dKpis([[r.km.toFixed(1),'km'],[nf.format(Math.round(r.up)),'m up'],[fmtH(r.h),'walking'],[`${r.water} l`,'water']])+
+        `<p class="small mute dmeta">${fmtDate(isoDay(hikeDate(r.d.n)))} · ${fmtClock(CLK[r.d.i0])} → ${fmtClock(CLK[r.d.i1])}${S.breaks?' with rests':''} · ${nf.format(Math.round(r.dn))} m down · top ${nf.format(Math.round(r.top))} m · ${r.wq?`${r.wq} water point${r.wq>1?'s':''}`:'no water on the way'}${r.stops.length?` · passes ${r.stops.slice(0,4).map(esc).join(', ')}`:''}</p>`)).join('')+
+      dMeans(M)+`<p class="dsrc">Effort is km-effort: each kilometre and each 100 m of climbing count 1. Times use the DIN 33466 hiking formula at your pace.</p>`}}
+  return null}
+
+/* ---------- the best views along the hike ---------- */
+// From points every 200 m of the route, look all round over the heights: how far you can see, how high the mountains stand
+// around you, how deep the ground drops below you, whether you stand on a crest, and which named summits are in sight.
+// The best few, spread out along the route, are the hike's best views; each looks the way with the most to see.
+const VIEWS_V=4;let VDBG=null;
+function losClear(px,py,eye,tx,ty,tz){const n=60;for(let k=1;k<n;k++){const f=k/n,z=TER.at(px+(tx-px)*f,py+(ty-py)*f);if(z>eye+(tz-eye)*f+15)return false}return true}
+function bestViews(){const nm=(D.landmarks||[]).length;if(D.views&&D.views.v===VIEWS_V&&D.views.n===N&&D.views.m===nm)return D.views.list;
+  const AZ=48,maxD=Math.min(30000,Math.hypot(D.w,D.h)*MPP*.7),inside=(x,y)=>x>=0&&y>=0&&x<=D.w&&y<=D.h,cand=[];let last=-1;
+  for(let i=0;i<N;i++)if(R.d[i]-last>=.2||i===N-1){cand.push(i);last=R.d[i]}
+  const LMK=(D.landmarks||[]).filter(m=>isFinite(m.e));
+  const sc=cand.map(i=>{const px=R.x[i],py=R.y[i],eye=TER.at(px,py)+2,dir=new Float32Array(AZ);let fmax=0,far=0,drop=0,sky=[],around=0,na=0;
+    for(let a=0;a<AZ;a++){const an=a/AZ*2*Math.PI,ux=Math.sin(an),uy=-Math.cos(an);let mt=-9,fv=0,sk=-9;
+      for(let d=60;d<maxD;d=d*1.06+15){const qx=px+ux*d/MPP,qy=py+uy*d/MPP;if(!inside(qx,qy))break;const z=TER.at(qx,qy),t=(z-eye)/d;if(d<900){around+=z;na++}
+        if(t>mt){mt=t;fv=d;if(d>2500)sk=Math.max(sk,Math.atan(t)*57.3);if(d<6000)drop=Math.max(drop,eye-z)}}
+      far+=Math.min(fv,25000);fmax=Math.max(fmax,fv);sky.push(Math.max(-2,sk));dir[a]=Math.max(0,sk)/10+Math.min(fv,25000)/25000}
+    const pano=far/AZ/25000,hiS=sky.slice().sort((x,y)=>y-x),peaks=Math.min(1,hiS.slice(0,AZ>>2).reduce((s,v)=>s+v,0)/(AZ>>2)/16),crest=Math.min(1,Math.max(0,(eye-around/Math.max(1,na))/250));
+    // named summits in sight, and the way with the most to see (a little wider than straight ahead)
+    const seen=LMK.map(m=>{const d=Math.hypot(m.x-px,m.y-py)*MPP;if(d<400||d>30000||!losClear(px,py,eye,m.x,m.y,m.e))return null;return{name:m.name,e:m.e,d,az:(Math.atan2(m.x-px,-(m.y-py))*180/Math.PI+360)%360}}).filter(Boolean);
+    seen.forEach(m=>{const a=Math.round(m.az/360*AZ)%AZ;dir[a]+=.6;dir[(a+1)%AZ]+=.3;dir[(a+AZ-1)%AZ]+=.3});
+    let ba=0,bv=-1;for(let a=0;a<AZ;a++){let v=0;for(let k=-3;k<=3;k++)v+=dir[(a+k+AZ)%AZ]*(1-Math.abs(k)/4);if(v>bv){bv=v;ba=a}}let el=-2;for(let k=-3;k<=3;k++)el=Math.max(el,sky[(ba+k+AZ)%AZ]);
+    return{i,parts:[+pano.toFixed(2),+peaks.toFixed(2),Math.round(drop),+crest.toFixed(2),seen.length],score:.9*pano+.8*peaks+.5*Math.min(1,drop/1200)+.5*crest+Math.min(.45,seen.length*.09),az:ba/AZ*360,el,far:far/AZ,max:fmax,peaks:seen.sort((a,b)=>b.e-a.e)}});
+  const km=R.d[N-1],K=Math.max(2,Math.min(6,Math.round(km/10)+1)),pick=[],ord=sc.slice().sort((a,b)=>b.score-a.score),top=ord.length?ord[0].score:0,far=c=>!pick.some(p=>Math.abs(R.d[p.i]-R.d[c.i])<2.5);
+  for(const d of DAYS){const c=ord.find(c=>R.day[c.i]===d.n&&far(c));if(c&&c.score>=.6*top&&pick.length<K)pick.push(c)}
+  for(const c of ord){if(pick.length>=K)break;if(far(c))pick.push(c)}VDBG=ord.slice(0,14).map(c=>[c.i,+R.d[c.i].toFixed(1),+c.score.toFixed(2),...c.parts]);
+  pick.sort((a,b)=>a.i-b.i);const best=Math.max(...pick.map(p=>p.score),1e-6);
+  const list=pick.map(p=>{const inDir=p.peaks.filter(m=>{let d=Math.abs(m.az-p.az)%360;d=Math.min(d,360-d);return d<70});
+    return{i:p.i,az:Math.round(p.az),el:Math.round(p.el*10)/10,far:Math.round(p.far),max:Math.round(p.max),q:Math.round(p.score/best*100)/100,peaks:(inDir.length?inDir:p.peaks).slice(0,4).map(m=>({name:m.name,e:Math.round(m.e),d:Math.round(m.d)}))}});
+  D.views={v:VIEWS_V,n:N,m:nm,list};save();return list}
+const VIEWICON='<svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg>';
+// a view is named after the place it is at, or else the nearest named place along the trail that day
+const viewName=v=>{const n=placeName(v.i);if(!/^km /.test(n))return n;const dn=R.day[v.i];let a=null,ad=5,b=null,bd=5;
+  for(const p of PTS){if(p.kind==='high'||R.day[p.i]!==dn)continue;const dd=R.d[p.i]-R.d[v.i];if(dd>0&&dd<ad){ad=dd;a=p}else if(dd<0&&-dd<bd){bd=-dd;b=p}}
+  return a&&(!b||ad<=bd)?`Before ${a.name}`:b?`After ${b.name}`:v.peaks.length?`${v.peaks[0].name} view`:`Day ${dn}, km ${(R.d[v.i]-R.d[dayOf(v.i).i0]).toFixed(1)}`};
+const viewWhat=v=>{const t=viewName(v),p=v.peaks.filter(m=>`${m.name} view`!==t).slice(0,3).map(m=>esc(m.name));return p.length?p.join(', '):`up to ${Math.round((v.max||v.far)/1000)} km away`};
+function renderViewsCard(){const el=$('#viewscard');if(!el)return;let V=[];try{V=bestViews()}catch(e){console.warn('views',e)}if(!V.length){el.hidden=true;return}el.hidden=false;
+  el.innerHTML=`<div class="ch"><h2 class="micro">Best views</h2><span class="micro">${V.length} on this hike</span></div><ul class="vlist">${V.map((v,k)=>`<li><button class="vlook" data-look="${k}" aria-label="Look from ${esc(viewName(v))}">${VIEWICON}</button><div><b>${esc(viewName(v))}${v.q===1?' <span class="vbest">Best</span>':''}</b><span>${viewWhat(v)} · looking ${HP.compass(v.az)}</span><span class="micro">Day ${R.day[v.i]} · km ${(R.d[v.i]-R.d[dayOf(v.i).i0]).toFixed(1)} · ${fmtClock(CLK[v.i])}</span></div></li>`).join('')}</ul>`+
+    `<button class="btn small fpgo" data-fp="1">${VIEWICON}Walk it in first person</button>`}
+function viewsDetail(){const V=bestViews();if(!V.length)return null;const M=[],sunny=[];
+  // a low sun in front of you makes the view hazy and the summits dark against the light
+  V.forEach(v=>{const sn=sunAt(CLK[v.i],R.day[v.i]),saz=(Math.atan2(sn.x,-sn.z)*180/Math.PI+360)%360;let d=Math.abs(saz-v.az)%360;d=Math.min(d,360-d);if(sn.y>.05&&sn.y<.57&&d<45)sunny.push(viewName(v))});
+  if(sunny.length)M.push(['info',`Low sun ahead at ${sunny.length===1?'one view':`${sunny.length} views`} (${esc(sunny.join(', '))}): the view looks hazier and photos come out dark. Sunglasses and a cap help.`]);
+  M.push(['ok','Plan a longer break at these points. Clear, dry air after a front gives the longest views; afternoon haze and clouds on the summits shorten them.']);
+  return{title:'Best views',html:dHero(V.length,V.length===1?'view':'views','the best on this hike, found from the terrain','var(--sun)')+
+    dSec('Along the route',`<ul class="dlist vdl">${V.map((v,k)=>`<li><b>${esc(viewName(v))} · ${nf.format(Math.round(R.e[v.i]))} m${v.q===1?' <span class="vbest">Best</span>':''}</b><span>Day ${R.day[v.i]} · km ${(R.d[v.i]-R.d[dayOf(v.i).i0]).toFixed(1)} · about ${fmtClock(CLK[v.i])} · looking ${HP.compass(v.az)}, up to ${Math.round((v.max||v.far)/1000)} km</span>`+
+      `${v.peaks.length?`<span>${v.peaks.map(p=>`<span class="nw">${esc(p.name)} ${nf.format(p.e)} m, ${(p.d/1000).toFixed(p.d<10000?1:0)} km</span>`).join(' · ')}</span>`:''}<button class="btn small" data-dact="look:${k}">${VIEWICON}Look from here</button></li>`).join('')}</ul>`)+
+    `<button class="btn primary wide" data-dact="walk">${VIEWICON}Walk the hike in first person</button>`+dMeans(M)+
+    `<p class="dsrc">From the terrain heights: from points every 200 m, how far you can see all round, how high the mountains stand, how deep the valleys drop and which named summits are in clear sight. Clouds, trees and buildings are not counted.</p>`}}
 
 /* ---------- profile ---------- */
 const SKYC={sun:['#f2c641','Sun'],cu:['#ead58b','Sun and cloud'],shade:['#b8ae8e','Mountain shade'],grey:['#a9b2b8','Grey, overcast'],cloud:['#d9dee2','In cloud or fog'],rain:['#4d8fd4','Rain'],snow:['#b7d3f0','Snow or sleet'],storm:['#7b4fc9','Thunderstorm'],night:['#28344d','Dark'],none:['#e6e8e4','No forecast']};
@@ -358,7 +644,7 @@ function updateCursor(){const prof=$('#prof'),g=prof&&prof.querySelector('#cur')
   const x=PX.X(R.d[i]),y=PX.Y(R.e[i]);g.style.display='';g.querySelector('#curl').setAttribute('x1',x);g.querySelector('#curl').setAttribute('x2',x);g.querySelector('#curc').setAttribute('cx',x);g.querySelector('#curc').setAttribute('cy',y)}
 function setupProfile(sig){const prof=$('#prof');
   const at=e=>{const r=prof.getBoundingClientRect(),x=e.clientX-r.left;const v=PX.x0+(x-PX.m.l)/(PX.W-PX.m.l-PX.m.r)*(PX.x1-PX.x0);return nearestByDist(Math.min(Math.max(v,PX.x0),PX.x1),PX.a,PX.b)};
-  prof.addEventListener('pointermove',e=>{if(PX&&!(V3&&V3.playing()))setIndex(at(e))},sig);
+  prof.addEventListener('pointermove',e=>{if(PX&&!(V3&&(V3.playing()||V3.fp()&&e.pointerType==='mouse'&&!e.buttons)))setIndex(at(e))},sig);
   prof.addEventListener('click',e=>{if(!PX)return;const i=at(e);if(!S.day&&DAYS.length>1)selectDay(R.day[i],true);setIndex(i)},sig)}
 
 /* ---------- 3D ---------- */
@@ -465,15 +751,15 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     const wide=Math.max(u1-u0,2000)*(port?1.3:1.14),deep=Math.max(w1-w0,1200)*Math.sin(el)+(y1-y0)*S.ex*Math.cos(el);
     const dist=Math.max(wide/2/th,deep*1.15/2/tv)+1500;
     return{target,pos:target.clone().add(dir.multiplyScalar(dist))}};
-  let fly=null;
+  let fly=null,FP=null,lastLoop=0;
   const flyTo=f=>{if(reduce){camera.position.copy(f.pos);controls.target.copy(f.target);return}fly={t0:performance.now(),p0:camera.position.clone(),q0:controls.target.clone(),f}};
   const frameDay=()=>S.day?frame(DAYS[S.day-1].i0,DAYS[S.day-1].i1):frame(0,N-1);
   let touched=false,framedPort=null;
   const resize=()=>{const w=stage.clientWidth,h=stage.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();LM.forEach(m=>m.resolution.set(w,h));
-    if(framedPort!==null&&(w<h)!==framedPort&&!fly){framedPort=w<h;const f=frameDay();if(touched)flyTo(f);else{camera.position.copy(f.pos);controls.target.copy(f.target)}}};
+    if(framedPort!==null&&(w<h)!==framedPort&&!fly&&!FP){framedPort=w<h;const f=frameDay();if(touched)flyTo(f);else{camera.position.copy(f.pos);controls.target.copy(f.target)}}};
   resize();const ro=new ResizeObserver(resize);ro.observe(stage);ROs.push(ro);
   const f0=frameDay();camera.position.copy(f0.pos);controls.target.copy(f0.target);controls.update();framedPort=camera.aspect<1;
-  const WXV=initWX3D({scene,renderer,camera,controls,sun,hemi,W,H,M,minH,maxH,LM,stage,det:det0,view:f0.pos.clone().sub(f0.target)});resize();
+  const WXV=initWX3D({fogD:()=>FP?6500:camera.position.distanceTo(controls.target),scene,renderer,camera,controls,sun,hemi,W,H,M,minH,maxH,LM,stage,det:det0,view:f0.pos.clone().sub(f0.target)});resize();
   // ---------- the ground: a quadtree of map tiles that get finer and sharper where the camera is close, like a web map ----------
   // Far away the model shows the pictures saved with the hike. Close up, each tile loads its own picture (Swiss aerial
   // pictures inside Switzerland for Satellite, OpenTopoMap for Topo) and its ground follows the detailed heights.
@@ -619,14 +905,14 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   $('.tools').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
     if(b.dataset.map){S.map=b.dataset.map;mapPicked=true;applyMap()}
     if(b.dataset.color){S.color=b.dataset.color;recolor();updateReadout()}
-    if(b.dataset.ex){const k=+b.dataset.ex/S.ex,oldY=controls.target.y;S.ex=+b.dataset.ex;group.scale.y=S.ex;controls.target.y*=k;camera.position.y+=controls.target.y-oldY;WXV.ex();doBake()}
+    if(b.dataset.ex){const k=+b.dataset.ex/S.ex,oldY=controls.target.y;S.ex=+b.dataset.ex;group.scale.y=S.ex;controls.target.y*=k;camera.position.y+=controls.target.y-oldY;WXV.ex();doBake();if(FP){FP.sv.ex=S.ex;FP.y=null}}
     syncTools();save()},sig);
-  $('#reset').addEventListener('click',()=>flyTo(frameDay()),sig);
+  $('#reset').addEventListener('click',()=>{if(FP)fpExit();else flyTo(frameDay())},sig);
   const stopPlay=()=>{playing=null;$('#play').textContent='▶ Walk'};
-  $('#play').addEventListener('click',()=>{if(playing){stopPlay();return}if(!S.day)selectDay(1,true);const d=DAYS[S.day-1];playing={d,t0:performance.now()+(reduce?0:900),dur:Math.max(8,R.t[d.i1]*2.4)*1000};$('#play').textContent='❚❚ Pause';hideHint()},sig);
+  $('#play').addEventListener('click',()=>{if(playing){stopPlay();return}if(FP)fpExit();if(!S.day)selectDay(1,true);const d=DAYS[S.day-1];playing={d,t0:performance.now()+(reduce?0:900),dur:Math.max(8,R.t[d.i1]*2.4)*1000};$('#play').textContent='❚❚ Pause';hideHint()},sig);
   const tag=$('#tag'),north=$('#north');
   const place=()=>{const r={w:stage.clientWidth,h:stage.clientHeight};
-    if(S.i>=0){const p=P(S.i),dist=camera.position.distanceTo(p),s=dist*.0055;marker.position.copy(p);halo.position.copy(p);marker.scale.setScalar(s);halo.scale.setScalar(s);marker.visible=halo.visible=true;
+    if(S.i>=0&&!FP){const p=P(S.i),dist=camera.position.distanceTo(p),s=dist*.0055;marker.position.copy(p);halo.position.copy(p);marker.scale.setScalar(s);halo.scale.setScalar(s);marker.visible=halo.visible=true;
       v.copy(p).project(camera);if(v.z<1){const d=dayOf(S.i);tag.hidden=false;tag.textContent=`${DAYS.length>1?`Day ${d.n} · `:''}${fmtClock(clock(S.i))} · ${nf.format(Math.round(R.e[S.i]))} m${TAGT}`;const tx=(v.x+1)/2*r.w,ty=(1-v.y)/2*r.h;tag._x=Math.min(Math.max(tx+14,4),r.w-tag.offsetWidth-4);tag._y=Math.max(ty-42,4);tag.style.transform=`translate(${tag._x}px,${tag._y}px)`}else tag.hidden=true}
     else{tag.hidden=true;marker.visible=halo.visible=false}
     const placed=[];if(!tag.hidden&&tag._x!=null)placed.push({x:tag._x,y:tag._y,w:tag.offsetWidth,h:tag.offsetHeight});
@@ -670,15 +956,72 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   const follow=()=>{const c=camera.position,t=controls.target,w=1-Math.min(1,Math.max(0,(c.distanceTo(t)-3000)/5000));
     if(w>0){const dy=(gAt(t.x,t.z)+20*S.ex-t.y)*.12*w;if(Math.abs(dy)>.05){t.y+=dy;c.y+=dy}}
     const cg=gAt(c.x,c.z)+60*S.ex;if(c.y<cg)c.y=cg};
-  const loop=now=>{raf=requestAnimationFrame(loop);if(document.hidden)return;
+  // ---------- first person: walk the route at eye height, looking ahead, with the light of the hour you are there ----------
+  // Drag to look around, pinch or scroll to zoom. The walk stops for a look at each of the best views.
+  const FPS=[30,120],fpEl=$('#fpbar'),fpCap=$('#fpcap'),fpV=new THREE.Vector3(),fpA=new THREE.Vector3(),FPT=new Map();
+  const setEx=v=>{if(v===S.ex)return;const k=v/S.ex,oldY=controls.target.y;S.ex=v;group.scale.y=S.ex;controls.target.y*=k;camera.position.y+=controls.target.y-oldY;WXV.ex();doBake();syncTools()};
+  const fpAt=(km,out)=>{let lo=0,hi=N-1;while(lo<hi){const m=(lo+hi)>>1;if(R.d[m]<km)lo=m+1;else hi=m}const i=Math.max(1,lo),a=R.d[i-1],b=R.d[i],f=b>a?Math.min(1,Math.max(0,(km-a)/(b-a))):0;
+    out.set(rp[(i-1)*3]+(rp[i*3]-rp[(i-1)*3])*f,0,rp[(i-1)*3+2]+(rp[i*3+2]-rp[(i-1)*3+2])*f);return f<.5?i-1:i};
+  const yawOf=b=>Math.atan2(Math.sin(b*Math.PI/180),-Math.cos(b*Math.PI/180)),wrapY=a=>Math.atan2(Math.sin(a),Math.cos(a));
+  // stops on the way: a look at each of the best views, the end of each day and the finish; they follow changes to the plan
+  let FPL=null;const fpStops=()=>{const V=bestViews(),key=DAYS.map(d=>d.i1).join();if(FPL&&FPL.V===V&&FPL.key===key)return FPL.L;
+    const L=V.map(v=>({km:R.d[v.i],az:v.az,el:v.el||0,ms:5000,v}));DAYS.slice(0,-1).forEach(d=>L.push({km:R.d[d.i1],ms:3200,day:d.n,i:d.i1}));L.push({km:R.d[N-1],end:1,i:N-1});
+    L.sort((x,y)=>x.km-y.km);FPL={V,key,L};return L};
+  // bring the 3D view into sight when a walk starts from further down the page
+  const reveal=jump=>{const r=stage.getBoundingClientRect(),hh=$('#top').offsetHeight||0;if(r.top<hh-2||r.bottom>innerHeight+2)window.scrollTo({top:Math.max(0,scrollY+r.top-hh),behavior:jump||matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})};
+  function fpEnter(km,{play=true,face=null}={}){if(playing)stopPlay();glide=null;fly=null;
+    if(!FP){FP={sv:{fov:camera.fov,ex:S.ex},speed:0};if(S.ex!==1)setEx(1);controls.enabled=false;camera.fov=camera.aspect<1?68:58;camera.near=4;camera.updateProjectionMatrix();lines.forEach(l=>l.position.y=-13);fpEl.hidden=false;stage.classList.add('fp');$('#fpbtn').setAttribute('aria-pressed','true');hideHint()}
+    km=Math.max(0,Math.min(R.d[N-1],km));
+    Object.assign(FP,{km,play,yaw:null,ly:0,lp:0,pt:0,y:null,touch:0,pause:face!=null&&!play?Infinity:0,face,fel:0});
+    const t=face!=null?fpStops().find(t=>t.v&&Math.abs(t.km-km)<.03):null;if(t)FP.fel=t.el;fpCaption(t);const i=fpAt(km,fpV);FP.myI=i;if(S.i!==i)setIndex(i);fpSync()}
+  function fpExit(){if(!FP)return;const sv=FP.sv;FP=null;FPT.clear();fpEl.hidden=true;fpCap.hidden=true;stage.classList.remove('fp');$('#fpbtn').setAttribute('aria-pressed','false');camera.fov=sv.fov;camera.near=20;camera.updateProjectionMatrix();controls.enabled=true;lines.forEach(l=>l.position.y=0);
+    if(sv.ex!==S.ex)setEx(sv.ex);flyTo(frameDay())}
+  function fpCaption(t){if(!t){fpCap.hidden=true;return}fpCap.innerHTML=t.v?`<b>${VIEWICON}${esc(viewName(t.v))}</b><span>${viewWhat(t.v)}</span>`:`<b>${t.end?'Finish':`End of day ${t.day}`}</b><span>${esc(placeName(t.i))} · ${fmtClock(CLK[t.i])}</span>`;fpCap.hidden=false}
+  function fpSync(){if(!FP)return;const on=FP.play&&FP.pause!==Infinity;$('#fpplay').innerHTML=on?'❚❚':'▶';$('#fpplay').setAttribute('aria-label',on?'Pause':'Walk on');$('#fpspeed').textContent=FP.speed?'4×':'1×'}
+  function fpStep(now,dt){const F=FP,end=R.d[N-1];
+    // a point picked elsewhere (the profile, a day chip) moves the walker there
+    if(S.i>=0&&S.i!==F.myI&&Math.abs(R.d[S.i]-F.km)>.05){F.km=R.d[S.i];F.yaw=null;F.y=null;F.face=null;F.pause=0;fpCap.hidden=true}
+    if(F.play&&now>F.pause){if(F.pause){F.pause=0;F.face=null;fpCap.hidden=true}const k0=F.km;F.km=Math.min(end,F.km+FPS[F.speed]*dt/1e6);
+      const t=fpStops().find(t=>t.km>k0+1e-6&&t.km<=F.km+1e-9);if(t){F.km=t.km;fpCaption(t);if(t.end){F.play=false;fpSync()}else{F.pause=now+t.ms/(F.speed?1.6:1);F.face=t.az;F.fel=t.el||0}}}
+    const i=fpAt(F.km,fpV),ahead=Math.min(end,F.km+.16),j=fpAt(ahead,fpA);if(F.km>end-.16){fpAt(Math.max(0,F.km-.16),fpA);fpA.set(2*fpV.x-fpA.x,0,2*fpV.z-fpA.z)}
+    const h=F.face!=null?yawOf(F.face):Math.atan2(fpA.x-fpV.x,fpA.z-fpV.z);if(F.yaw===null)F.yaw=h;else F.yaw+=wrapY(h-F.yaw)*Math.min(1,dt/(F.face!=null?900:650));
+    // look a little down the path going down and up it going up; ease the look back after a drag
+    const sl=F.face!=null?Math.min(.3,Math.max(-.05,(F.fel*.55-1)*Math.PI/180+.07)):Math.atan((R.e[j]-R.e[i])/Math.max(40,(R.d[j]-R.d[i])*1000))*.55;F.pt+=(sl-F.pt)*Math.min(1,dt/700);
+    if(F.play&&now-F.touch>2500){const k=Math.exp(-dt/800);F.ly*=k;F.lp*=k}
+    let g=-1e9;for(const[ox,oz]of[[0,0],[12,0],[-12,0],[0,12],[0,-12]])g=Math.max(g,gAt(fpV.x+ox,fpV.z+oz));const gy=Math.max(g,R.e[i]*S.ex)+12;
+    F.y=F.y===null||gy>F.y?(F.y===null?gy:F.y+(gy-F.y)*Math.min(1,dt/90)):F.y+(gy-F.y)*Math.min(1,dt/350);const y=Math.max(F.y,g+3);
+    const yw=F.yaw+F.ly,pt=-.07+F.pt+F.lp,dx=Math.sin(yw)*Math.cos(pt),dz=Math.cos(yw)*Math.cos(pt),dy=Math.sin(pt);
+    camera.position.set(fpV.x,y,fpV.z);controls.target.set(fpV.x+dx*400,y+dy*400,fpV.z+dz*400);camera.lookAt(controls.target);
+    if(i!==S.i)setIndex(i);F.myI=S.i;
+    if(S.day&&R.day[i]!==S.day)selectDay(R.day[i],false);
+    $('#fpinfo').textContent=`Day ${R.day[i]} · km ${(R.d[i]-R.d[dayOf(i).i0]).toFixed(1)} · ${fmtClock(CLK[i])}`}
+  $('#fpplay').addEventListener('click',()=>{if(!FP)return;if(FP.km>=R.d[N-1]-.01){fpEnter(S.day?R.d[DAYS[S.day-1].i0]:0);return}if(FP.pause===Infinity){FP.pause=0;FP.play=true}else FP.play=!FP.play;fpSync()},sig);
+  $('#fpspeed').addEventListener('click',()=>{if(!FP)return;FP.speed=FP.speed?0:1;fpSync()},sig);
+  $('#fpexit').addEventListener('click',fpExit,sig);
+  document.addEventListener('keydown',e=>{if(!FP||e.target.closest('input,select,textarea')||document.querySelector('#drawer:not([hidden]),#sheet:not([hidden]),#dialog:not([hidden]),#ied:not([hidden])'))return;if(e.key==='Escape'){e.preventDefault();fpExit()}else if(e.key===' '&&!e.target.closest('button,a')){e.preventDefault();$('#fpplay').click()}},sig);
+  $('#fpbtn').addEventListener('click',()=>{if(FP){fpExit();return}reveal();fpEnter(S.i>=0?R.d[S.i]:S.day?R.d[DAYS[S.day-1].i0]:0)},sig);
+  $('#viewscard').addEventListener('click',e=>{const b=e.target.closest('[data-look],[data-fp]');if(!b)return;if(b.dataset.look!=null)V3.look(+b.dataset.look);else{reveal();fpEnter(S.day?R.d[DAYS[S.day-1].i0]:0)}},sig);
+  // in first person the fingers and the mouse look around and zoom; nothing else on the map reacts
+  cv.addEventListener('pointerdown',e=>{if(!FP)return;e.stopImmediatePropagation();try{cv.setPointerCapture(e.pointerId)}catch(x){}FPT.set(e.pointerId,{x:e.clientX,y:e.clientY});FP.touch=performance.now()},{capture:true});
+  cv.addEventListener('pointermove',e=>{if(!FP)return;e.stopImmediatePropagation();const p=FPT.get(e.pointerId);if(!p)return;
+    if(FPT.size===1){FP.ly-=(e.clientX-p.x)*.005;FP.lp=Math.max(-.9,Math.min(.8,FP.lp+(e.clientY-p.y)*.004))}
+    else if(FPT.size===2){const[a,b]=[...FPT.values()],d0=Math.hypot(a.x-b.x,a.y-b.y),q={x:e.clientX,y:e.clientY},o=a===p?b:a,d1=Math.hypot(q.x-o.x,q.y-o.y);if(d0>10&&d1>10){camera.fov=Math.min(80,Math.max(25,camera.fov*d0/d1));camera.updateProjectionMatrix()}}
+    p.x=e.clientX;p.y=e.clientY;FP.touch=performance.now()},{capture:true});
+  const fpUp=e=>{if(!FP)return;e.stopImmediatePropagation();FPT.delete(e.pointerId);FP.touch=performance.now()};cv.addEventListener('pointerup',fpUp,{capture:true});cv.addEventListener('pointercancel',fpUp,{capture:true});
+  cv.addEventListener('wheel',e=>{if(!FP)return;e.preventDefault();e.stopImmediatePropagation();camera.fov=Math.min(80,Math.max(25,camera.fov*(1+e.deltaY*.001)));camera.updateProjectionMatrix()},{capture:true,passive:false});
+  const loop=now=>{raf=requestAnimationFrame(loop);if(document.hidden||!stage.getClientRects().length)return;const dt=Math.min(100,now-(lastLoop||now));lastLoop=now;
+    if(FP)fpStep(now,dt);else{
     if(fly){const t=Math.min(1,(now-fly.t0)/1100),k=ease(t);camera.position.lerpVectors(fly.p0,fly.f.pos,k);controls.target.lerpVectors(fly.q0,fly.f.target,k);if(t>=1)fly=null}
     if(tg)touchStep(now);if(glide&&!fly)glideOn(now);
     if(playing&&now>=playing.t0){const d=playing.d,f=Math.min(1,(now-playing.t0)/playing.dur),T=f*WALK[d.i1];let lo=d.i0,hi=d.i1;while(lo<hi){const m=(lo+hi)>>1;if(WALK[m]<T)lo=m+1;else hi=m}if(lo!==S.i)setIndex(lo);if(f>=1)stopPlay()}
-    controls.update();if(!fly)follow();WXV.frame(now);TILES.update(now);place();north.style.transform=`rotate(${controls.getAzimuthalAngle()}rad)`;renderer.render(scene,camera)};
-  V3=window.V3={cam:camera,stage,ctl:controls,det:()=>bakeRT?[bakeRT.width,bakeRT.height]:null,cover:(w,h,up)=>{if(up)COVER_UP=up;return snap(w,h)},groundAt:(x,y)=>{const g=groundAt(x,y,new THREE.Vector3());return g&&g.toArray()},toScreen:a=>{const r=cv.getBoundingClientRect(),q=new THREE.Vector3(...a).project(camera);return[r.left+(q.x+1)/2*r.width,r.top+(1-q.y)/2*r.height]},gliding:()=>!!glide,tiles:()=>TILES.stats(),mark(){WXV.time()},times(){WXV.time(true)},strike:hold=>WXV.testStrike(hold),playing:()=>!!playing,
-    dayChanged(doFly){recolor();if(playing&&R.day[playing.d.i0]!==S.day)stopPlay();if(doFly)flyTo(frameDay())},
+    controls.update();if(!fly)follow()}
+    WXV.frame(now);TILES.update(now);place();const az=FP?Math.atan2(camera.position.x-controls.target.x,camera.position.z-controls.target.z):controls.getAzimuthalAngle();north.style.transform=`rotate(${az}rad)`;for(const a of $$('#readout .warr'))a.style.transform=`rotate(${az+a.dataset.to*Math.PI/180}rad)`;renderer.render(scene,camera)};
+  V3=window.V3={cam:camera,stage,ctl:controls,det:()=>bakeRT?[bakeRT.width,bakeRT.height]:null,cover:(w,h,up)=>{if(up)COVER_UP=up;return snap(w,h)},groundAt:(x,y)=>{const g=groundAt(x,y,new THREE.Vector3());return g&&g.toArray()},toScreen:a=>{const r=cv.getBoundingClientRect(),q=new THREE.Vector3(...a).project(camera);return[r.left+(q.x+1)/2*r.width,r.top+(1-q.y)/2*r.height]},gliding:()=>!!glide,tiles:()=>TILES.stats(),mark(){WXV.time()},times(){WXV.time(true)},strike:hold=>WXV.testStrike(hold),playing:()=>!!playing,windGrid:(nx,day,t)=>{const ny=Math.round(nx*D.h/D.w),o=[];for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){const px=(i+.5)/nx*D.w,py=(j+.5)/ny*D.h,w=windAt(px,py,day,t);o.push([px,py,+w.e.toFixed(2),+w.n.toFixed(2),Math.round(TER.at(px,py))])}return{nx,ny,w:D.w,h:D.h,o}},wind:i=>{const c=cond(i,CLK[i]);return{v:+c.v.toFixed(1),g:+c.g.toFixed(1),dir:Math.round(c.dir),from:HP.compass(c.dir)}},
+    dayChanged(doFly){recolor();if(playing&&R.day[playing.d.i0]!==S.day)stopPlay();if(FP){const d=S.day&&DAYS[S.day-1];if(d&&(FP.km<R.d[d.i0]-.01||FP.km>R.d[d.i1]+.01))fpEnter(R.d[d.i0],{play:FP.play});return}if(doFly)flyTo(frameDay())},
+    dayEndKm:n=>R.d[DAYS[n-1].i1],viewsDebug:()=>VDBG,look(k,jump){const V=bestViews(),v=V[k];reveal(jump);if(!(k>=0)||!v){fpEnter(S.day?R.d[DAYS[S.day-1].i0]:0);return}fpEnter(R.d[v.i],{play:false,face:v.az})},firstPerson(km){fpEnter(km||0)},fpExit,
+    fp:()=>FP?{km:+FP.km.toFixed(3),play:FP.play,pause:FP.pause===Infinity?'hold':FP.pause?'stop':'',ex:S.ex,fov:camera.fov,day:S.day,i:S.i,cap:fpCap.hidden?'':fpCap.textContent,next:(fpStops().find(t=>t.km>FP.km+1e-6)||{}).km,left:FP.pause&&FP.pause!==Infinity?Math.round(FP.pause-performance.now()):0}:null,
     relabel(){makeLabels();recolor()},
-    dispose(){alive=false;cancelAnimationFrame(raf);TILES.dispose();[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};
+    dispose(){alive=false;cancelAnimationFrame(raf);FP=null;stage.classList.remove('fp');fpEl.hidden=true;fpCap.hidden=true;$('#fpbtn').setAttribute('aria-pressed','false');TILES.dispose();[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};
   recolor();syncTools();applyMap();WXV.time(true);$('#msg').hidden=true;raf=requestAnimationFrame(loop);useDEM();
   // hikes saved before version 1.4 get the satellite picture and the detailed heights once, with a connection
   const need={sat:!BLOBS.sat,dem:!BLOBS.dem||!D.dem};
@@ -909,7 +1252,7 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
     csT.needsUpdate=true;dirty=true}
   const placeY=()=>{layers.forEach(l=>l.position.y=l.userData.alt*S.ex);shafts.forEach(m=>{const d=m.userData;if(!d.r)return;m.position.set(d.x,(d.bot+d.top)/2*S.ex,d.z);m.scale.set(d.r,(d.top-d.bot)*S.ex,d.r)})};
   const SK={zen:C('#3b77c3'),hor:C('#b8d2e6'),gzen:C('#8e979e'),ghor:C('#c1c8cd'),szen:C('#3d4650'),shor:C('#7d8891'),nzen:C('#081120'),nhor:C('#1a2740'),fzen:C('#1d56ab'),fhor:C('#a2c5e9'),gold:C('#f0a35f')},WHITE=C('#ffffff');
-  const zen=C(0),hor=C(0),gnd=C(0);let curT=-99,curKey='',curSt={},curI=0,plainOn=null,lastSun=new THREE.Vector3(),PRC=[],PRrate=0,PRtop=3000,PRsl=9e3,PRdir=new THREE.Vector2(),PRon=false,lastNow=0,dimF=1,windAt=null;
+  const zen=C(0),hor=C(0),gnd=C(0);let curT=-99,curKey='',curSt={},curI=0,plainOn=null,lastSun=new THREE.Vector3(),PRC=[],PRrate=0,PRtop=3000,PRsl=9e3,PRdir=new THREE.Vector2(),PRon=false,lastNow=0,dimF=1,trailW=null;
   const camF=new THREE.Vector3(),lastCam=new THREE.Matrix4();
   function apply(force){
     const i=S.i>=0?S.i:0,t=S.i>=0?CLK[S.i]:(S.wx==='storm'?15:S.wx==='sea'?8.5:12),k=S.wx+S.mon+(S.wx==='fc'?'|'+FCP[i]+'|'+R.day[i]:'');if(!force&&k===curKey&&Math.abs(t-curT)<1/120)return;curT=t;curKey=k;curI=i;
@@ -938,7 +1281,9 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
     U.uFogAmt.value=st.fog?Math.min(1,st.fog.amt*1.2):0;U.uFogTop.value=st.fog?st.fog.top:-1e3;U.uFogCol.value.setRGB(.97,.98,.99).multiplyScalar(dimF);
     U.uDeckAmt.value=st.deck?(st.over?.74:.88):0;U.uDeckBase.value=st.deck?st.deck.base:9e3;U.uDeckTop.value=st.deck?st.deck.top:9e3;U.uDeckShade.value=st.deckShade?.85:0;
     U.uCloudCol.value.set(st.over?'#c2c8cd':'#e2e6e9').multiplyScalar(dimF);
-    let wdir,wspd;if(S.wx==='fc'&&st.f){wdir=st.f.wd||0;wspd=st.f.ws||0;windAt=(z)=>({v:wspd*(1+.6*sst(GW.hmin,GW.hmax,z)),dir:wdir})}else{const sc=SCN[S.wx==='fc'?'plain':S.wx],wv=sc.wind(GW.hmax*.8,t);wdir=wv.dir;wspd=wv.v;windAt=z=>sc.wind(z,curT)}
+    // clouds, rain and snow drift with the wind above the hills; the wind's trails follow the terrain-aware wind
+    let wdir,wspd;const b0=WF?windBase(R.day[i]||1,t):null;if(b0){wspd=Math.hypot(b0.u,b0.v);wdir=(Math.atan2(-b0.u,-b0.v)*180/Math.PI+360)%360}else if(S.wx==='fc'&&st.f){wdir=st.f.wd||0;wspd=st.f.ws||0}else{const wv=SCN[S.wx==='fc'?'plain':S.wx].wind(GW.hmax*.8,t);wdir=wv.dir;wspd=wv.v}
+    trailW=WF?(x,z,agl)=>windAt(x/M+W/2,z/M+H/2,R.day[curI]||1,curT,agl):null;
     const wb=(wdir+180)*Math.PI/180;U.uWind.value.set(Math.sin(wb),-Math.cos(wb)).multiplyScalar(.004*(.3+wspd/40));
     flashK=Math.min(1.25,.35+.8*(1-day)+.35*(st.dark||0));const pu=puM.uniforms,dk=st.dark||0,cdir=sst(-.02,.14,sn.y)*(1-.3*dk)*(st.over?.25:1);WSUN.copy(sv);pu.uSunC.value.setRGB(1,.97-.14*gold,.92-.3*gold).multiplyScalar(.95*cdir);
     pu.uAmbS.value.copy(zen).lerp(WHITE,.5).multiplyScalar((.26+.36*day)*(1-.25*dk)*(st.over?1.2:1));pu.uAmbG.value.setRGB(.4,.42,.41).multiplyScalar((.24+.36*day)*(1-.25*dk)*(st.over?1.2:1));
@@ -977,10 +1322,10 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
   // a flash inside the cloud, with no channel to see: it lights the cloud from within
   function icFlash(now){const cs=(curSt.cells||[]).filter(c=>c.I>.45);if(!cs.length)return;const c=cs[Math.floor(Math.random()*cs.length)],{zb,top}=cellTop(c),u=Math.random()*6.283,q=Math.random()*c.R*.7,y=zb+(top-zb)*(.12+.45*Math.random());
     IC={t:now,d:90+Math.random()*260,a:.45+.55*Math.random(),ph:Math.random()*6,p:[wx(c.x)+Math.cos(u)*q,ey(y),wz(c.y)+Math.sin(u)*q]}}
-  function windFrame(dt){if(!wl.visible||!windAt)return;const Dc=camera.position.distanceTo(controls.target),sz=Math.min(Math.max(Dc*1.2,3000),60000),cx=controls.target.x,cz=controls.target.z,k0=curSt.windVis||0;
+  function windFrame(dt){if(!wl.visible||!trailW)return;const Dc=camera.position.distanceTo(controls.target),sz=Math.min(Math.max(Dc*1.2,3000),60000),cx=controls.target.x,cz=controls.target.z,k0=curSt.windVis||0;
     let o=0,c=0;const bx0=Math.max(X0,cx-sz/2),bx1=Math.min(X0+SX,cx+sz/2),bz0=Math.max(Z0,cz-sz/2),bz1=Math.min(Z0+SZ,cz+sz/2);
     for(const p of wP){if(p.age>p.life||p.x<bx0||p.x>bx1||p.z<bz0||p.z>bz1){p.x=bx0+Math.random()*Math.max(1,bx1-bx0);p.z=bz0+Math.random()*Math.max(1,bz1-bz0);p.h=60+Math.random()*700;p.age=0;p.life=1.5+Math.random()*2.5;p.acc=0;const y=(tAt(p.x,p.z)+p.h)*S.ex;for(let j=0;j<TL;j++){p.tr[j*3]=p.x;p.tr[j*3+1]=y;p.tr[j*3+2]=p.z}}
-      p.age+=dt;const w=windAt(tAt(p.x,p.z)+p.h),b=(w.dir+180)*Math.PI/180,sp=w.v*Dc*.0012*k0;p.x+=Math.sin(b)*sp*dt;p.z-=Math.cos(b)*sp*dt;const y=(tAt(p.x,p.z)+p.h)*S.ex;
+      p.age+=dt;const w=trailW(p.x,p.z,p.h),sp=Dc*.0012*k0;p.x+=w.e*sp*dt;p.z-=w.n*sp*dt;const y=(tAt(p.x,p.z)+p.h)*S.ex;
       p.acc+=dt;if(p.acc>.08){p.acc=0;p.tr.copyWithin(3,0,(TL-1)*3)}p.tr[0]=p.x;p.tr[1]=y;p.tr[2]=p.z;
       const fade=Math.min(1,p.age*3,(p.life-p.age)*3)*Math.min(1,w.v/35)*.85*(PRon?.35:1)*dimF;
       for(let j=0;j<TL-1;j++){wpos[o]=p.tr[j*3];wpos[o+1]=p.tr[j*3+1];wpos[o+2]=p.tr[j*3+2];wpos[o+3]=p.tr[j*3+3];wpos[o+4]=p.tr[j*3+4];wpos[o+5]=p.tr[j*3+5];o+=6;
@@ -988,9 +1333,9 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
     wgeo.attributes.position.needsUpdate=true;wgeo.attributes.color.needsUpdate=true}
   function frame(now){const dt=Math.min(.05,(now-(lastNow||now))/1000);lastNow=now;U.uTime.value=now/1000;U.uEx.value=S.ex;
     camera.updateMatrixWorld();sky.position.copy(camera.position);U.uCamP.value.copy(camera.position);
-    const Dc=camera.position.distanceTo(controls.target),cl=plainOn?.92:(curSt.clar??.8);U.uHazeK.value=(.12+.5*(1-cl))/Math.max(Dc,7000);
+    const Dc=camera.position.distanceTo(controls.target),Df=o.fogD?o.fogD():Dc,cl=plainOn?.92:(curSt.clar??.8);U.uHazeK.value=(.12+.5*(1-cl))/Math.max(Df,7000);
     if(plainOn)return;
-    fogO.near=Dc*.9;fogO.far=Dc*(1.6+6*cl);
+    fogO.near=Df*.9;fogO.far=Df*(1.6+6*cl);
     const e=camera.matrixWorld.elements;puM.uniforms.uCamR.value.set(e[0],e[1],e[2]);puM.uniforms.uCamU.value.set(e[4],e[5],e[6]);camF.set(-e[8],-e[9],-e[10]);
     puM.uniforms.uSunV.value.copy(WSUN).transformDirection(camera.matrixWorldInverse);puM.uniforms.uUpV.value.set(0,1,0).transformDirection(camera.matrixWorldInverse);glM.uniforms.uPx.value=renderer.getPixelRatio();
     puM.uniforms.uFogNear.value=fogO.near*1.25;puM.uniforms.uFogFar.value=fogO.far;puM.uniforms.uFogCol.value.copy(fogO.color);
@@ -1014,5 +1359,7 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
   const testStrike=hold=>{const now=performance.now();strike(now);nextStrike=now+(hold?1e9:5000);if(BS&&hold){BS.strokes=[{t:now,d:1e9,a:1}];BS.end=now+1e9}return!!BS};
   return{time(force){apply(force)},frame,ex(){U.uEx.value=S.ex;placeY();dirty=true;fitShadow()},U,prep,testStrike}}
 
-HP.viewer={open,close,current:()=>D,updateForecast:()=>updateForecast(true)};
+HP.viewer={open,close,current:()=>D,updateForecast:()=>updateForecast(true),detail:k=>{try{return detail(k)}catch(e){console.error(e);return null}},
+  look:(k,jump)=>{if(V3)V3.look(k,jump)},
+  pack:(k,on)=>{if(!D)return;D.packed=D.packed||{};if(on)D.packed[k]=1;else delete D.packed[k];save()}};
 })();
