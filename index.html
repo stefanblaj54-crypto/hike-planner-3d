@@ -118,6 +118,7 @@
     <p><b>Best views</b> are found from the terrain alone: how far you can see, how high the mountains around you stand, how deep the valleys drop and which named summits are in clear sight. Clouds, forest and buildings are not counted. <b>First person</b> walks the route at true height, with the light and weather of the hour you would be there.</p>
     <p><b>Inventory</b> keeps your own gear on this phone only. The packing advice names the first item of each kind, and uses general words where you have none.</p>
     <p><b>Safety</b> is checked against the paths mapped in OpenStreetMap. Grades follow the SAC scale: T1 hiking, T2 mountain hiking, T3 demanding (hands at times), T4 and up alpine. In Switzerland the waymarks tell the grade too: yellow T1, white-red-white T2–T3, white-blue-white T4 and up. Steep drops beside the path come from the terrain heights: ground that keeps falling at 42° or more from 10 to 55 m out. A stretch is never called too hard for a beginner from the terrain alone, only from the map's grades, via ferratas, glaciers, closures or long stretches with no path. The check runs once with a connection and stays with the hike; it is done again after two months.</p>
+    <p><b>Find an easier way</b> asks the BRouter trail router for a way round each hard place the safety check found: with no stretches harder than T2 (T3 too, for an alpine stretch, a via ferrata, a glacier or a closure), starting 1.5 km and then 5 km before and after it. A way round is offered when its detour stays reasonable, and it is saved as a new hike next to this one, so you can compare them.</p>
     <p><b>Live guide</b> uses your phone's GPS and works without a connection. It warns you with a sound when you are more than 40 m from the route for three positions in a row (more when the signal is weak, and never on a very weak signal), points the way back, and chimes as you come to each junction. It keeps the screen on, which uses more battery: carry a power bank. Keep the guide open on the screen: with the phone locked, a web app cannot follow you or warn you. On an iPhone the sound follows the ring/silent switch, and web apps cannot vibrate. Your position stays on your phone unless you share it.</p>
     <p><b>Difficulty</b> grades are OpenStreetMap's sac_scale tags; steepness is the slope of the path in degrees, averaged over about 200 m. Water points are springs and taps marked on OpenStreetMap; check that they run.</p>
     <p>Heights come from satellite data, so summits can read a little low. The plan is a guide: on the ground, follow the waymarks, check the national weather service, and turn back when conditions change.</p>
@@ -132,6 +133,7 @@
 
 <!-- a card's detail page, over the open hike -->
 <section class="screen" id="scr-detail" hidden>
+  <div class="detsurf" aria-hidden="true"></div>
   <div class="detail" id="detail"></div>
 </section>
 
@@ -266,6 +268,7 @@
 <script src="js/trail.js"></script>
 <script src="js/viewer.js"></script>
 <script src="js/guide.js"></script>
+<script src="js/motion.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

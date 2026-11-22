@@ -109,8 +109,10 @@ async def guide(pg, tag):
     await pg.screenshot(path=T.SHOTS + f"guide_sos_{tag}.png")
     await pg.click("#gsosx")
     # Back closes the guide
-    await pg.go_back(); await pg.wait_for_timeout(600)
-    check(not await pg.evaluate("HP.guide.active()") and await pg.is_visible("#scr-view"), "Back closes the guide and shows the map again")
+    await pg.go_back()
+    try: await pg.wait_for_function("!HP.guide.active()&&!document.querySelector('#scr-view').hidden", timeout=8000)
+    except Exception: pass
+    check(not await pg.evaluate("HP.guide.active()") and await pg.is_visible("#scr-view"), "Back closes the guide (it sinks away first) and shows the map again")
 
 async def real_gps(b, log, errs):
     # the phone's own position, through the browser's location service

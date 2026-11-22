@@ -7,9 +7,11 @@ const SAC={hiking:1,mountain_hiking:2,demanding_mountain_hiking:3,alpine_hiking:
 const coarse=()=>matchMedia('(pointer: coarse)').matches;
 
 /* ---------- routing along trails (BRouter, OpenStreetMap paths) ---------- */
-HP.route=async function(points,signal){
-  const ll=points.map(p=>p.lon.toFixed(6)+','+p.lat.toFixed(6)).join('|');
-  const url=`https://brouter.de/brouter?lonlats=${ll}&profile=hiking-mountain&alternativeidx=0&format=geojson&profile:SAC_scale_limit=4&profile:SAC_scale_preferred=2&profile:hiking_routes_preference=1.0`;
+// o.sac: the hardest SAC grade allowed (4 unless given); o.nogos: [lon,lat,metres] circles the route must keep out of
+HP.route=async function(points,signal,o={}){
+  const ll=points.map(p=>p.lon.toFixed(6)+','+p.lat.toFixed(6)).join('|'),lim=o.sac||4;
+  const nogo=o.nogos&&o.nogos.length?'&nogos='+o.nogos.map(n=>`${n[0].toFixed(6)},${n[1].toFixed(6)},${Math.round(n[2])}`).join('|'):'';
+  const url=`https://brouter.de/brouter?lonlats=${ll}&profile=hiking-mountain&alternativeidx=0&format=geojson&profile:SAC_scale_limit=${lim}&profile:SAC_scale_preferred=${Math.min(2,lim)}&profile:hiking_routes_preference=1.0${nogo}`;
   let txt;try{const r=await fetch(url,{signal});txt=await r.text()}catch(e){if(signal&&signal.aborted)throw e;throw Error('The trail router could not be reached. Check the connection.')}
   if(txt.trim()[0]!=='{')throw Error(/island|not mapped|no route/i.test(txt)?'No path found to one of the points. Move it closer to a trail.':'Routing failed: '+txt.slice(0,120));
   const f=JSON.parse(txt).features[0],co=f.geometry.coordinates,msgs=f.properties.messages||[],hdr=msgs[0]||[];
@@ -20,6 +22,33 @@ HP.route=async function(points,signal){
     const ks=(km.get(Math.round(+m[iLo])+','+Math.round(+m[iLa]))||[]).filter(k=>k>=last),end=ks.length?ks[0]:last;
     for(let k=last;k<=end;k++)sac[k]=code;last=end}
   return{pts:co.map(c=>({lat:c[1],lon:c[0],e:c[2]})),sac,km:(+f.properties['track-length']||0)/1000,up:+f.properties['filtered ascend']||0}};
+
+/* ---------- an easier way: round the hard places of a route ---------- */
+// The hard places (findings of the safety check, each with i0 and i1 on the route) are grouped when less than 2 km apart.
+// Each group is kept out of with no-go circles along it, and BRouter looks for a way between points 1.5 km, then 5 km,
+// before and after it, with T2 as the hardest grade allowed (T3 too when the group holds an alpine or other must-avoid place).
+// A way round is kept when its detour stays reasonable: up to 80% of the stretch it replaces, at least 3 km and at most 15 km;
+// for drops and cliff edges on ordinary paths, up to half of it and at least 1.5 km. The rest of the route is kept as it is.
+HP.easier=async function(D,spots,signal,prog){
+  const R=D.route,N=R.lat.length,idx=km=>{let lo=0,hi=N-1;km=Math.max(0,Math.min(R.d[N-1],km));while(lo<hi){const m=(lo+hi)>>1;if(R.d[m]<km)lo=m+1;else hi=m}return lo};
+  const climb=(a,b)=>{let u=0;for(let i=a;i<b;i++){const d=R.e[i+1]-R.e[i];if(d>0)u+=d}return u};
+  const G=[];for(const x of spots.slice().sort((a,b)=>a.i0-b.i0)){const g=G[G.length-1];if(g&&R.d[x.i0]-R.d[g.i1]<2){g.i1=Math.max(g.i1,x.i1);g.items.push(x)}else G.push({i0:x.i0,i1:x.i1,items:[x]})}
+  const kind=g=>g.items.every(x=>/drop|edge/.test(x.k))?'local':g.items.some(x=>x.lvl==='bad')?'must':'hard';
+  const reps=[];let lastB=0,calls=0;const total=G.reduce((n,g)=>n+{local:1,hard:2,must:4}[kind(g)],0);
+  for(const g of G){const kd=kind(g),local=kd==='local';let best=null;
+    const nogos=[];for(const x of g.items){for(let i=x.i0;i<=x.i1;i+=4)nogos.push([R.lon[i],R.lat[i],40]);nogos.push([R.lon[x.i1],R.lat[x.i1],40])}
+    // first without T3 at all, near then further out; then, for a must-avoid place, allowing T3
+    for(const lim of kd==='must'?[2,3]:[2]){for(const w of local?[1.5]:[1.5,5]){const a=Math.max(lastB,idx(R.d[g.i0]-w)),b=idx(R.d[g.i1]+w);if(a>=g.i0||b<=g.i1)continue;prog&&prog(++calls,total);
+        const old=R.d[b]-R.d[a],maxX=local?Math.max(1.5,old*.5):Math.min(15,Math.max(3,old*.8));let r=null;
+        try{r=await HP.route([{lat:R.lat[a],lon:R.lon[a]},{lat:R.lat[b],lon:R.lon[b]}],signal,{sac:lim,nogos})}catch(e){if(signal&&signal.aborted)throw e}
+        if(r&&r.pts.length>1&&r.km-old<=maxX){best={a,b,r,lim,old,extra:r.km-old,dUp:r.up-climb(a,b)};break}}
+      if(best)break}
+    if(best){reps.push({...best,g});lastB=best.b}else reps.push({g,fail:true})}
+  const ok=reps.filter(x=>!x.fail);if(!ok.length)return{reps,none:true};
+  const pts=[],sac=[];let i=0;
+  for(const x of ok){for(;i<x.a;i++){pts.push({lat:R.lat[i],lon:R.lon[i]});sac.push(R.sac[i]||0)}for(let k=0;k<x.r.pts.length;k++){pts.push(x.r.pts[k]);sac.push(x.r.sac[k]||0)}i=x.b+1}
+  for(;i<N;i++){pts.push({lat:R.lat[i],lon:R.lon[i]});sac.push(R.sac[i]||0)}
+  return{pts,sac:D.sacKnown?sac:null,reps,extra:ok.reduce((s,x)=>s+x.extra,0),dUp:ok.reduce((s,x)=>s+x.dUp,0),hard:D.sacKnown?Math.max(0,...sac):null}};
 
 /* ---------- tiles ---------- */
 async function getImage(url,signal){const r=await fetch(url,{signal,mode:'cors'});if(!r.ok)throw Error('HTTP '+r.status);const b=await r.blob();

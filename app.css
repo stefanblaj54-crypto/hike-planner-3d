@@ -668,3 +668,133 @@ body.guiding{overflow:hidden}body.guiding #top{display:none}
 .play.guidego{display:inline-flex;align-items:center;gap:7px}.play.guidego svg{width:16px;height:16px;fill:currentColor}
 .dbtns{display:grid;gap:10px;margin-top:6px}
 @media (min-width:760px){.gtop{left:50%;right:auto;width:560px;transform:translateX(-50%)}.gpanel{left:50%;right:auto;width:600px;transform:translateX(-50%);border-radius:24px 24px 0 0}.gside{top:calc(env(safe-area-inset-top) + 20px)}}
+
+/* ---------- an easier way: the button while it looks, and the comparison in the dialog ---------- */
+.spin{display:inline-block;width:15px;height:15px;margin-right:9px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .7s linear infinite;vertical-align:-2px;flex:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn.busy{opacity:.85;cursor:progress}
+.easybtn{margin-top:12px;width:100%}
+#dlgmsg.rich{display:grid;gap:8px;text-align:left}#dlgmsg.rich .micro{margin:8px 0 0;color:var(--mute)}
+.dlgt{font:700 1.375rem/1.15 'Barlow Semi Condensed',sans-serif;color:var(--ink)}
+.ecmp{margin:4px 0 2px}.ecmp b i{font-style:normal;font-size:.875rem;color:var(--mute);font-weight:600}
+.elist{list-style:none;margin:0;padding:0;display:grid;gap:6px;font-size:.9375rem;line-height:1.35}
+.elist li{position:relative;padding-left:20px}.elist li::before{content:'';position:absolute;left:2px;top:.42em;width:9px;height:9px;border-radius:50%;background:var(--fair)}
+.elist.ok li::before{background:var(--good)}
+
+/* ======================================================================================================================
+   Motion (since 2.1). Timing: presses answer within ~100 ms, things that move across the screen take 0.35–0.5 s on the
+   drawer curve (fast start, long soft landing), nothing starts slowly. Only transform and opacity animate.
+   ====================================================================================================================== */
+:root{--e-out:cubic-bezier(.22,1,.36,1);--e-drawer:cubic-bezier(.32,.72,0,1);--e-exit:cubic-bezier(.4,0,.7,.2)}
+html{-webkit-tap-highlight-color:transparent}
+body{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+button,.btn,.chip,.wchip,.card[data-det],.hike,.ring[data-det]{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
+@media (hover:none){.card[data-det]:hover{border-color:var(--line)}}
+:where(button,.btn,a,[role=button],.card[data-det]):focus-visible{outline:2px solid var(--sel);outline-offset:2px}
+.chip,.wchip,.seg button,.segc button{transition:color .25s var(--e-out),background-color .25s var(--e-out),border-color .25s var(--e-out)}
+
+/* ---------- page transitions (View Transition API) ---------- */
+html[data-vt] .top{view-transition-name:top}
+html[data-vt=expand] .detsurf,html[data-vt=collapse] .detsurf{view-transition-name:surface}
+html[data-vt=expand] #detail,html[data-vt=collapse] #detail{view-transition-name:detc}
+.detsurf{display:none;position:fixed;inset:0;z-index:-1;background:var(--bg);pointer-events:none}html[data-vt=expand] .detsurf,html[data-vt=collapse] .detsurf{display:block}
+::view-transition-group(*){animation-duration:.42s;animation-timing-function:var(--e-drawer)}
+::view-transition-group(top){animation-duration:.3s}
+/* going deeper: the new screen slides over from the right, the old one moves a little left and dims; back is the reverse */
+html[data-vt=push]::view-transition-old(root),html[data-vt=push]::view-transition-new(root),html[data-vt=pop]::view-transition-old(root),html[data-vt=pop]::view-transition-new(root){mix-blend-mode:normal;animation-duration:.44s;animation-timing-function:var(--e-drawer);animation-fill-mode:both}
+html[data-vt=push]::view-transition-new(root){animation-name:vt-from-right;box-shadow:-18px 0 40px rgba(0,0,0,.28)}
+html[data-vt=push]::view-transition-old(root){animation-name:vt-to-left}
+html[data-vt=pop]::view-transition-old(root){animation-name:vt-to-right;z-index:1;box-shadow:-18px 0 40px rgba(0,0,0,.28)}
+html[data-vt=pop]::view-transition-new(root){animation-name:vt-from-left}
+@keyframes vt-from-right{from{transform:translateX(100%)}}
+@keyframes vt-to-left{to{transform:translateX(-26%);filter:brightness(.6)}}
+@keyframes vt-to-right{to{transform:translateX(100%)}}
+@keyframes vt-from-left{from{transform:translateX(-26%);filter:brightness(.6)}}
+/* a card grows into its page: the card's shape becomes the page, its words fade, the page's content rises in */
+::view-transition-image-pair(surface),::view-transition-image-pair(pic){overflow:clip}
+::view-transition-old(surface),::view-transition-new(surface),::view-transition-old(pic),::view-transition-new(pic){height:100%;object-fit:cover;object-position:50% 0}
+html[data-vt=expand]::view-transition-group(surface){animation-duration:.48s}
+/* the shape itself is the image pair's own background: graphite like the card, deepening to the page's black as it grows */
+html[data-vt=expand]::view-transition-image-pair(surface){animation:vt-unround .48s var(--e-drawer) both,vt-deepen .48s var(--e-out) both}
+html[data-vt=expand]::view-transition-old(surface){height:auto;object-fit:fill;animation:vt-out .16s var(--e-out) both}
+html[data-vt=expand]::view-transition-new(surface){animation:none;opacity:0}
+html[data-vt=expand]::view-transition-new(detc){animation:vt-rise .44s var(--e-out) .1s both}
+html[data-vt=expand]::view-transition-old(root){animation:vt-recede .48s var(--e-drawer) both}
+html[data-vt=expand]::view-transition-new(root){animation:vt-in .3s var(--e-out) .08s both}
+html[data-vt=collapse]::view-transition-group(surface){animation-duration:.44s}
+html[data-vt=collapse]::view-transition-image-pair(surface){animation:vt-round .44s var(--e-drawer) both,vt-lighten .44s var(--e-out) both}
+html[data-vt=collapse]::view-transition-old(surface){animation:none;opacity:0}
+html[data-vt=collapse]::view-transition-new(surface){height:auto;object-fit:fill;animation:vt-in .2s var(--e-out) .26s both}
+html[data-vt=collapse]::view-transition-old(detc){animation:vt-sink .2s var(--e-out) both}
+html[data-vt=collapse]::view-transition-old(root){animation:vt-out .26s var(--e-out) both}
+html[data-vt=collapse]::view-transition-new(root){animation:vt-return .44s var(--e-drawer) both}
+@keyframes vt-unround{from{border-radius:calc(var(--rk)*18px)}to{border-radius:0}}
+@keyframes vt-deepen{from{background-color:var(--panel)}to{background-color:var(--bg)}}
+@keyframes vt-lighten{from{background-color:var(--bg)}to{background-color:var(--panel)}}
+@keyframes vt-round{from{border-radius:0}to{border-radius:calc(var(--rk)*18px)}}
+@keyframes vt-in{from{opacity:0}}
+@keyframes vt-out{to{opacity:0}}
+@keyframes vt-rise{from{opacity:0;transform:translateY(22px)}}
+@keyframes vt-sink{to{opacity:0;transform:translateY(14px)}}
+@keyframes vt-recede{to{opacity:0;transform:scale(.94)}}
+@keyframes vt-return{from{opacity:0;transform:scale(.94)}}
+/* a hike's picture grows into its 3D view */
+html[data-vt=hero]::view-transition-group(pic){animation-duration:.52s}
+html[data-vt=hero]::view-transition-image-pair(pic){animation:vt-unround2 .52s var(--e-drawer) both}
+html[data-vt=hero]::view-transition-old(pic){animation:none;opacity:1}
+html[data-vt=hero]::view-transition-new(pic){animation:vt-in .24s linear .16s both}
+html[data-vt=hero]::view-transition-old(root){animation:vt-out .24s var(--e-out) both}
+html[data-vt=hero]::view-transition-new(root){animation:vt-rise .42s var(--e-out) .12s both}
+@keyframes vt-unround2{from{border-radius:calc(var(--rk)*16px)}to{border-radius:0}}
+html[data-vt=fade]::view-transition-old(root){animation:vt-out .18s var(--e-out) both}
+html[data-vt=fade]::view-transition-new(root){animation:vt-in .26s var(--e-out) both}
+/* the 3D view shows the hike's own picture until the first frame is drawn, then fades it away */
+.stage.ph::after{content:'';position:absolute;inset:0;z-index:2;background:var(--ph) center/cover no-repeat;pointer-events:none;transition:opacity .7s var(--e-out)}
+.stage.ph.live::after{opacity:0}
+.stage.ph:not(.live) .msg{opacity:0}
+.stage.ph:not(.live)::before{content:'';position:absolute;left:0;bottom:0;z-index:3;height:2px;width:40%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent);animation:shimmer 1.2s linear infinite}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(250%)}}
+
+/* ---------- overlays: in with CSS, out through HP.motion.close ---------- */
+.drawer:not([hidden]){animation:vt-in .3s var(--e-out)}
+.drawer:not([hidden]) .dbox{animation:drawer-in .46s var(--e-drawer)}
+.drawer.out{animation:vt-out .26s var(--e-out) both}.drawer.out .dbox{animation:drawer-out .28s var(--e-drawer) both}
+@keyframes drawer-in{from{transform:translateX(-100%)}}@keyframes drawer-out{to{transform:translateX(-100%)}}
+.sheet:not([hidden]){animation:vt-in .3s var(--e-out)}
+.sheet:not([hidden]) .sheetbox{animation:sheet-in .46s var(--e-drawer)}
+.sheet.out{animation:vt-out .24s var(--e-out) both}.sheet.out .sheetbox{animation:sheet-out .28s var(--e-drawer) both}
+@keyframes sheet-in{from{transform:translateY(100%)}}@keyframes sheet-out{to{transform:translateY(100%)}}
+.dialog:not([hidden]){animation:vt-in .22s var(--e-out)}
+.dialog:not([hidden])>.dlgbox{animation:pop-in .38s var(--e-out)}
+.dialog.out{animation:vt-out .18s var(--e-out) both}.dialog.out>.dlgbox{animation:pop-out .18s var(--e-out) both}
+@keyframes pop-in{from{opacity:0;transform:translateY(10px) scale(.95)}}@keyframes pop-out{to{opacity:0;transform:scale(.97)}}
+.toast:not([hidden]){animation:toast-in .44s var(--e-out)}
+.toast.out{animation:toast-out .22s var(--e-out) both}
+@keyframes toast-in{from{opacity:0;translate:0 16px;scale:.96}}@keyframes toast-out{to{opacity:0;translate:0 10px;scale:.98}}
+.guide:not([hidden]){animation:guide-in .42s var(--e-out)}
+.guide.out{animation:guide-out .26s var(--e-out) both}
+@keyframes guide-in{from{opacity:0;transform:translateY(28px)}}@keyframes guide-out{to{opacity:0;transform:translateY(18px)}}
+.gsosbox:not([hidden]){animation:sheet-in .44s var(--e-drawer)}
+.resume:not([hidden]){animation:toast-in .5s var(--e-out)}
+
+/* ---------- one indicator slides to the chosen option ---------- */
+.has-ind{position:relative;isolation:isolate}
+.segi{position:absolute;left:0;top:0;z-index:-1;border-radius:999px;background:var(--sel);pointer-events:none;will-change:transform}
+.segc>.segi{border-radius:0}
+.has-ind>button[aria-pressed=true]{background:transparent!important;border-color:transparent!important}
+
+@media (prefers-reduced-motion:reduce){
+  .drawer:not([hidden]),.drawer:not([hidden]) .dbox,.sheet:not([hidden]),.sheet:not([hidden]) .sheetbox,.dialog:not([hidden]),.dialog:not([hidden])>.dlgbox,.toast:not([hidden]),.guide:not([hidden]),.gsosbox:not([hidden]),.resume:not([hidden]){animation:none}
+  .stage.ph::after,.stage.ph:not(.live)::before{transition:none;animation:none}}
+.gsosbox.out{animation:sheet-out .28s var(--e-drawer) both}
+.has-ind>.chip,.has-ind>.wchip{background:transparent}
+/* while something loads, its shape shimmers in place of the figures */
+.skel{position:relative;overflow:hidden;border-radius:6px;background:color-mix(in srgb,var(--ink) 7%,transparent)}
+.skel::after{content:'';position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--ink) 9%,transparent),transparent);animation:skel 1.3s var(--e-in-out,ease-in-out) infinite}
+.skel.sk1{height:26px;width:62%;margin:4px 0 12px}.skel.sk2{height:14px;width:88%;margin:12px 0 8px}.skel.sk3{height:14px;width:70%;margin-bottom:10px}
+.sstrip.skel{margin-bottom:0}
+@keyframes skel{to{transform:translateX(100%)}}
+@media (prefers-reduced-motion:reduce){.skel::after{animation:none}}
+/* headings and short texts break into even lines */
+.dhero b,.top h1,.hero h2,.dlgt,.gtop b,.card h2{text-wrap:balance}
+.dlist span,.alerts .al,.glines li,.about p{text-wrap:pretty}

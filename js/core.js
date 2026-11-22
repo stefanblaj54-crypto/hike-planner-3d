@@ -119,5 +119,5 @@ HP.inv={
   // the person's item for a kind, marked as theirs, or the general word
   word(k,fallback){const x=this.first(k),f=fallback!=null?fallback:(HP.INVK[k]||{}).word||k;return x?`<span class="own">${HP.u.esc(x.name)}</span>`:HP.u.esc(f)}};
 
-HP.toast=(msg,ms=3200)=>{const t=$('#toast');if(!t)return;t.textContent=msg;t.hidden=false;clearTimeout(t._h);t._h=setTimeout(()=>{t.hidden=true},ms)};
+HP.toast=(msg,ms=3200)=>{const t=$('#toast');if(!t)return;const M=HP.motion;t.textContent=msg;if(M)M.open(t);else t.hidden=false;clearTimeout(t._h);t._h=setTimeout(()=>{if(M)M.close(t);else t.hidden=true},ms)};
 })();

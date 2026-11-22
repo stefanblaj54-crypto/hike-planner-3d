@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='2.0';
+const VERSION='2.1';
 const SCREENS=['home','new','build','view','custom','about','inv','detail'];
 let cur='',viewId=null,building=null,installEvt=null,pendingDet=null,pendingLook=null,pendingShow=null,pendingGuide=false,viewScroll=0;
 
@@ -17,11 +17,17 @@ function show(name,title){cur=name;SCREENS.forEach(s=>{$('#scr-'+s).hidden=s!==n
 const depth=()=>(history.state&&history.state.d)||0;
 function go(hash){history.pushState({d:depth()+1},'',hash);route()}
 function replace(hash){history.replaceState({d:depth()},'',hash);route()}
-function back(){if(depth()>0)history.back();else replace('#/')}
+function back(hint){hint=typeof hint==='string'?hint:null;if(depth()>0){navHint=hint;history.back()}else{navHint=hint||'pop';replace('#/')}}
+let navD=null,vtPic=null,navHint=null;
 async function route(){
   const h=location.hash.replace(/^#\/?/,''),target=h.startsWith('hike/')?'view':h==='new'?'new':h==='customize'?'custom':h==='about'?'about':h==='inventory'?'inv':'home';
   if(cur==='view'&&target==='view'&&decodeURIComponent(h.slice(5))===viewId){syncDetail();syncGuide();return}
-  if(HP.guide.active())closeGuide();
+  // the first screen just appears; going deeper slides in from the right, going back the reverse; a hike's picture grows into its 3D view
+  const d=depth();let type=navD==null||cur==='build'?'none':navHint||(d>navD?'push':d<navD?'pop':'fade'),from=null;navD=d;navHint=null;
+  if(vtPic&&target==='view'&&type!=='none'){from=vtPic;type='hero'}vtPic=null;
+  return HP.motion.vt(()=>routeTo(h,target),{type,from,name:'pic',to:type==='hero'?()=>$('#stage'):null})}
+async function routeTo(h,target){
+  if(HP.guide.active())closeGuide(true);
   if(building&&target!=='new')cancelBuild();
   if(cur==='view'&&(target!=='view'||h.slice(5)!==viewId)){await flushSave();HP.viewer.close();viewId=null}
   if(updPending&&(target==='home'||target==='about')){try{sessionStorage.setItem('hp-upd',Date.now())}catch(e){}location.reload();return}
@@ -38,12 +44,12 @@ function headerState(){const t=$('#top');if(cur!=='home'){t.classList.remove('so
 addEventListener('scroll',headerState,{passive:true});
 
 /* ---------- dialogs ---------- */
-function ask(msg,{input=null,ok='OK',danger=false,cancel=true}={}){return new Promise(res=>{const d=$('#dialog'),inp=$('#dlginput');
-  $('#dlgmsg').textContent=msg;inp.hidden=input===null;inp.value=input||'';$('#dlgok').textContent=ok;$('#dlgok').classList.toggle('danger',danger);$('#dlgno').hidden=!cancel;d.hidden=false;(input!==null?inp:$('#dlgok')).focus();
-  const done=v=>{d.hidden=true;$('#dlgok').onclick=$('#dlgno').onclick=d.onclick=inp.onkeydown=null;res(v)};
+function ask(msg,{input=null,ok='OK',danger=false,cancel=true,html=false}={}){return new Promise(res=>{const d=$('#dialog'),inp=$('#dlginput');
+  if(html)$('#dlgmsg').innerHTML=msg;else $('#dlgmsg').textContent=msg;$('#dlgmsg').classList.toggle('rich',html);inp.hidden=input===null;inp.value=input||'';$('#dlgok').textContent=ok;$('#dlgok').classList.toggle('danger',danger);$('#dlgno').hidden=!cancel;HP.motion.open(d);(input!==null?inp:$('#dlgok')).focus();
+  const done=v=>{HP.motion.close(d);$('#dlgok').onclick=$('#dlgno').onclick=d.onclick=inp.onkeydown=null;res(v)};
   $('#dlgok').onclick=()=>done(input!==null?inp.value.trim():true);$('#dlgno').onclick=()=>done(null);
   d.onclick=e=>{if(e.target===d)done(null)};inp.onkeydown=e=>{if(e.key==='Enter')$('#dlgok').click()}})}
-addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#ied').hidden)$('#iedno').click();else if(!$('#dialog').hidden)$('#dlgno').click();else if(!$('#drawer').hidden)closeDrawer();else if(!$('#sheet').hidden)$('#sheet').hidden=true});
+addEventListener('keydown',e=>{if(e.key!=='Escape')return;if(!$('#ied').hidden)$('#iedno').click();else if(!$('#dialog').hidden)$('#dlgno').click();else if(!$('#drawer').hidden)closeDrawer();else if(!$('#sheet').hidden)HP.motion.close($('#sheet'))});
 
 /* ---------- home: the next hike as a skyline, then the list ---------- */
 // sample skyline for an empty app: the Făgăraș ridge from Bâlea Lac to Vârful Moldoveanu (OpenStreetMap trail, SRTM heights)
@@ -139,9 +145,14 @@ async function showHome(){show('home');await renderHome()}
 async function loadHikes(){let list=[];try{list=await HP.db.list()}catch(e){HP.toast('Saved hikes could not be read: '+e.message)}
   const today=isoDay(new Date()),up=list.filter(m=>(m.end||m.date)>=today).sort((a,b)=>a.date<b.date?-1:1),past=list.filter(m=>(m.end||m.date)<today).sort((a,b)=>a.date<b.date?1:-1);
   return{list,up,past,next:up[0]||null,latest:list.slice().sort((a,b)=>(b.created||0)-(a.created||0))[0]||null}}
+// the dials fill once, the first time the home screen shows in a visit: the one orchestrated moment
+let ringsDrawn=false;
+function drawRings(){if(ringsDrawn)return;ringsDrawn=true;if(HP.motion.reduced())return;
+  document.querySelectorAll('#hero .ring .arc').forEach((a,k)=>{const v=a.getAttribute('stroke-dasharray');if(!v||!a.animate)return;const C=v.split(/\s+/)[1]||'277';
+    a.animate([{strokeDasharray:`0 ${C}`},{strokeDasharray:v}],{duration:1300,delay:200+k*120,easing:'cubic-bezier(.22,1,.36,1)',fill:'backwards'})})}
 async function renderHome(){const seq=++homeSeq,{list,up,past,next,latest}=await loadHikes();
   if(seq!==homeSeq)return;lastList=list;nextMeta=next;latestMeta=latest;
-  const ink=await renderHero($('#hero'),heroModel(nextMeta,list.length));if(seq!==homeSeq)return;
+  const ink=await renderHero($('#hero'),heroModel(nextMeta,list.length));if(seq!==homeSeq)return;drawRings();
   document.body.style.setProperty('--sky-ink',ink);headerState();await renderList(up,past,list);if(seq!==homeSeq)return;installHint();
   const miss=list.filter(m=>m.v!==4);if(miss.length)backfill(miss).then(ch=>{if(ch&&cur==='home')renderHome()});
   else if(nextMeta)refreshForecast(nextMeta).then(ch=>{if(ch&&cur==='home')renderHome()})}
@@ -155,9 +166,9 @@ async function renderList(up,past,list){const P=LOOK.get(),cards=P.list==='cards
   $('#totals').textContent=P.totals&&list.length>1?`${list.length} hikes · ${fmtKm(tk)} km · ${nf.format(Math.round(tu/10)*10)} m up`:'';
   $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h micro">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'');
   const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Stored on this phone only. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © swisstopo':'')+'.':''}`}
-$('#hikes').addEventListener('click',e=>{const b=e.target.closest('.hike');if(b)go('#/hike/'+encodeURIComponent(b.dataset.id))});
+$('#hikes').addEventListener('click',e=>{const b=e.target.closest('.hike');if(!b)return;vtPic=b.querySelector('img.cov')||null;go('#/hike/'+encodeURIComponent(b.dataset.id))});
 $('#hero').addEventListener('click',e=>{const r=e.target.closest('.ring[data-det]');if(r&&nextMeta){pendingDet=r.dataset.det;go('#/hike/'+encodeURIComponent(nextMeta.id));return}const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
-  if(a==='open'&&nextMeta)go('#/hike/'+encodeURIComponent(nextMeta.id));else if(a==='new'||a==='draw'){go('#/new');setMode('draw')}else if(a==='import')startImport()});
+  if(a==='open'&&nextMeta){vtPic=document.querySelector('#hero img.cov')||null;go('#/hike/'+encodeURIComponent(nextMeta.id))}else if(a==='new'||a==='draw'){go('#/new');setMode('draw')}else if(a==='import')startImport()});
 $('#hero').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('.ring[data-det]')){e.preventDefault();e.target.click()}});
 function startImport(){if(cur!=='new')go('#/new');setMode('file');$('#file').click()}
 async function backfill(ms){let ch=false;for(const m of ms){try{const D=await HP.db.plan(m.id);if(!D)continue;if(!D.id)D.id=m.id;await HP.db.putMeta(Object.assign(m,metaOf(D,m.thumb)));ch=true}catch(e){}}return ch}
@@ -185,12 +196,12 @@ document.addEventListener('hp-look',()=>{if(cur==='home')renderHome()});
 matchMedia('(min-width:900px)').addEventListener('change',()=>{if(cur==='home')renderHome()});
 
 /* ---------- the menu ---------- */
-function openDrawer(){const d=$('#drawer');d.hidden=false;$('#menubtn').setAttribute('aria-expanded','true');
+function openDrawer(){const d=$('#drawer');HP.motion.open(d);$('#menubtn').setAttribute('aria-expanded','true');
   const here={home:'home',custom:'customize',about:'about',inv:'inventory'}[cur];$$('.ditem').forEach(b=>{if(b.dataset.go===here)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});
   $('#dinstall').hidden=standalone();storageNote();$('.ditem').focus()}
-function closeDrawer(){$('#drawer').hidden=true;$('#menubtn').setAttribute('aria-expanded','false');$('#menubtn').focus()}
+function closeDrawer(now){const d=$('#drawer');if(now)d.hidden=true;else HP.motion.close(d);$('#menubtn').setAttribute('aria-expanded','false');$('#menubtn').focus()}
 $('#menubtn').addEventListener('click',openDrawer);$('#dclose').addEventListener('click',closeDrawer);
-$('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer'){closeDrawer();return}const b=e.target.closest('[data-go]');if(!b)return;const g=b.dataset.go;closeDrawer();
+$('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer'){closeDrawer();return}const b=e.target.closest('[data-go]');if(!b)return;const g=b.dataset.go;closeDrawer(/^(home|new|customize|inventory|about)$/.test(g));
   if(g==='home'){if(cur!=='home')go('#/')}else if(g==='new'){go('#/new');setMode('draw')}else if(g==='import')startImport();else if(g==='customize')go('#/customize');else if(g==='inventory')go('#/inventory');else if(g==='about')go('#/about');else if(g==='install')installNow()});
 async function storageNote(){const n=lastList.length;let t=n?`${n} ${n>1?'hikes':'hike'} saved on this phone`:'No hikes saved yet';
   try{const e=navigator.storage&&await navigator.storage.estimate();if(e&&e.usage&&n)t+=`, using ${(e.usage/1048576).toFixed(e.usage<10485760?1:0)} MB`}catch(x){}
@@ -210,8 +221,8 @@ function renderInv(){const inv=HP.inv.load(),it=inv.items,cnt=HP.inv.count(),all
       return`<div class="irow"><span class="ilbl">${esc(label)}</span><div class="ivals">${a.map((x,n)=>`<button class="ichip${n?'':' first'}" data-k="${k}" data-n="${n}"><span class="inm">${esc(x.name)}</span>${x.g?`<small>${nf.format(+x.g)} g</small>`:''}</button>`).join('')}${a.length||!word||word.toLowerCase()===label.toLowerCase()?'':`<span class="iword">${esc(word)}</span>`}<button class="iadd" data-k="${k}" aria-label="Add: ${esc(label)}">+</button></div></div>`}).join('')}</div></section>`).join('')}
 $('#inv').addEventListener('click',e=>{const b=e.target.closest('.ichip,.iadd');if(!b)return;editItem(b.dataset.k,b.classList.contains('iadd')?-1:+b.dataset.n)});
 function editItem(k,n){const inv=HP.inv.load(),a=(inv.items[k]=Array.isArray(inv.items[k])?inv.items[k]:[]),x=n>=0?a[n]:null,d=$('#ied'),K=HP.INVK[k];
-  $('#iedttl').textContent=K.label;$('#iedname').value=x?x.name:'';$('#iedname').placeholder=INVEX[k]||'';$('#iedg').value=x&&x.g?x.g:'';$('#ieddel').hidden=!x;$('#iedfirst').hidden=!x||n===0;d.hidden=false;$('#iedname').focus();
-  const done=act=>{d.hidden=true;$('#iedform').onsubmit=$('#iedno').onclick=$('#ieddel').onclick=$('#iedfirst').onclick=d.onclick=null;
+  $('#iedttl').textContent=K.label;$('#iedname').value=x?x.name:'';$('#iedname').placeholder=INVEX[k]||'';$('#iedg').value=x&&x.g?x.g:'';$('#ieddel').hidden=!x;$('#iedfirst').hidden=!x||n===0;HP.motion.open(d);$('#iedname').focus();
+  const done=act=>{HP.motion.close(d);$('#iedform').onsubmit=$('#iedno').onclick=$('#ieddel').onclick=$('#iedfirst').onclick=d.onclick=null;
     if(act==='save'){const name=$('#iedname').value.trim().slice(0,60),g=Math.round(+$('#iedg').value)||0;if(!name)return;const o={name};if(g>0&&g<50000)o.g=g;if(x)a[n]=o;else a.push(o)}
     else if(act==='del')a.splice(n,1);else if(act==='first'){a.splice(n,1);a.unshift(x)}else return;
     if(!a.length)delete inv.items[k];HP.inv.save(inv);renderInv();HP.toast(act==='del'?'Removed':act==='first'?`${x.name} is now the first choice`:'Saved')};
@@ -344,7 +355,7 @@ document.addEventListener('click',e=>{if(!e.target.closest('#search'))$('#result
 const STEPS=[['route','The route'],['terrain','Terrain heights'],['map','Map and satellite pictures'],['places','Huts, passes, water and place names'],['weather','Climate statistics and the forecast'],['save','Saving on this phone']];
 function stepSet(k,f,note){const li=$(`#steps [data-k="${k}"]`);if(!li)return;li.className=f>=1?'done':f<0?'fail':'work';li.querySelector('.pb>span').style.width=Math.round(Math.max(0,Math.min(1,f))*100)+'%';if(note!=null)li.querySelector('small').textContent=note}
 function cancelBuild(){if(building){building.abort();building=null}}
-$('#bcancel').addEventListener('click',()=>{cancelBuild();show('new','New hike');refreshNewMap()});
+$('#bcancel').addEventListener('click',()=>{cancelBuild();if(lastBuild&&lastBuild.from){lastBuild=null;cur='';route()}else{show('new','New hike');refreshNewMap()}});
 $('#details').addEventListener('submit',e=>{e.preventDefault();startBuild()});
 const newId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const metaOf=(D,thumb)=>{const R=D.route,n=R.d.length,L=R.d[n-1]||1,end=parseDay(D.date);end.setDate(end.getDate()+D.days.length-1);
@@ -375,6 +386,10 @@ async function startBuild(){
   const src=NEW.mode==='draw'?NEW.routed:NEW.file;if(!src)return;
   const input=NEW.mode==='draw'?{pts:src.pts,sac:src.sac,wpts:[],names:{}}:{pts:src.pts,wpts:src.wpts,names:{}};
   const opts={name:$('#hname').value.trim(),date:$('#hdate').value,days:$('#hdays').value,start:$('#hstart').value||'07:00',pace:$('#hpace').value,breaks:$('#hbreaks').checked};
+  runBuild(input,opts)}
+// from: the hike an easier way is made from (Cancel goes back to it, and the new hike opens on top of it)
+let lastBuild=null;
+async function runBuild(input,opts,from=null){lastBuild={input,opts,from};
   const ac=building=new AbortController();
   show('build','Building the plan');$('#bname').textContent=opts.name||'Building your plan';$('#berr').hidden=true;$('#bagain').hidden=true;$('#bcancel').textContent='Cancel';
   $('#steps').innerHTML=STEPS.map(([k,t])=>`<li data-k="${k}"><i></i><b>${t}</b><span class="pb"><span></span></span><small></small></li>`).join('');
@@ -385,13 +400,15 @@ async function startBuild(){
     const thumb=await HP.thumb(D,blobs.sat||blobs.topo||blobs.relief);
     await HP.db.save(metaOf(D,thumb),D,blobs);stepSet('save',1);
     if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
-    building=null;Object.assign(NEW,{pts:[],hist:[],routed:null,file:null,err:''});$('#hname').value='';delete $('#hname').dataset.auto;
+    building=null;
+    if(from){go('#/hike/'+encodeURIComponent(D.id));return}
+    Object.assign(NEW,{pts:[],hist:[],routed:null,file:null,err:''});$('#hname').value='';delete $('#hname').dataset.auto;
     if(map){drawWps();drawLine()}updateStats();
     replace('#/hike/'+encodeURIComponent(D.id))}
   catch(e){if(ac.signal.aborted||ac!==building)return;building=null;console.error(e);
     const li=$('#steps li.work');if(li)stepSet(li.dataset.k,-1);
-    $('#berr').hidden=false;$('#berr').textContent=/Cancelled/.test(e.message)?'Cancelled.':e.message||'Something went wrong.';$('#bagain').hidden=false;$('#bcancel').textContent='Back to the route'}}
-$('#bagain').addEventListener('click',startBuild);
+    $('#berr').hidden=false;$('#berr').textContent=/Cancelled/.test(e.message)?'Cancelled.':e.message||'Something went wrong.';$('#bagain').hidden=false;$('#bcancel').textContent=from?'Back to the hike':'Back to the route'}}
+$('#bagain').addEventListener('click',()=>{if(lastBuild)runBuild(lastBuild.input,lastBuild.opts,lastBuild.from)});
 
 /* ---------- a saved hike ---------- */
 let saveT=0,pending=null;
@@ -405,14 +422,37 @@ addEventListener('visibilitychange',()=>{if(document.hidden)flushSave()});addEve
 async function openHike(id){if(cur==='view'&&viewId===id)return;
   let D,blobs;try{D=await HP.db.plan(id);if(D){blobs={};for(const k of['topo','relief','sat','dem'])blobs[k]=await HP.db.blob(id+':'+k)}}catch(e){HP.toast('This hike could not be read: '+e.message)}
   if(!D){HP.toast('This hike is no longer saved on this phone.');replace('#/');return}
-  if(!D.id)D.id=id;viewId=id;show('view',D.name);HP.viewer.open(D,blobs,onPlanChange);if(pendingDet){const k=pendingDet;pendingDet=null;setTimeout(()=>openDetail(k),60)}
+  if(!D.id)D.id=id;viewId=id;await stagePicture(id);show('view',D.name);HP.viewer.open(D,blobs,onPlanChange);if(pendingDet){const k=pendingDet;pendingDet=null;setTimeout(()=>openDetail(k,true),60)}
   if(pendingGuide){pendingGuide=false;setTimeout(openGuide,60)}}
+/* ---------- an easier way: the same hike round its hard places, built as a new hike next to it ---------- */
+const EASYK=/^(sac|vf|glacier|closed|aid|drop|edge|off|vis|hazard)$/;
+const leaveDetail=()=>new Promise(res=>{if(!(history.state&&history.state.det))return res();addEventListener('popstate',()=>setTimeout(res,30),{once:true});history.back()});
+async function findEasier(btn){const D=HP.viewer.current(),F=HP.viewer.safety();if(!D||!F||!btn||btn.disabled)return;
+  if(!navigator.onLine){HP.toast('Connect to the internet to look for an easier way.');return}
+  const spots=F.items.filter(x=>x.lvl!=='info'&&EASYK.test(x.k));if(!spots.length){HP.toast('Nothing on this route needs a way round.');return}
+  const label=btn.innerHTML,say=(n,t)=>{btn.innerHTML=`<span class="spin" aria-hidden="true"></span>Looking for an easier way${t?` · ${Math.min(n,t)} of ${t}`:''}`};
+  btn.disabled=true;btn.classList.add('busy');say(0,0);let r=null;
+  try{r=await HP.easier(D,spots,null,say)}catch(e){console.warn(e)}finally{btn.disabled=false;btn.classList.remove('busy');btn.innerHTML=label}
+  if(HP.viewer.current()!==D)return;
+  if(!r){HP.toast('The trail router could not be reached. Try again later.');return}
+  if(r.none){await ask('No easier way nearby: the hard places are on the only paths through. Plan a different hike, or go with someone experienced.',{cancel:false});return}
+  const name=x=>{const y=x.g.items.find(y=>y.k==="sac")||x.g.items[0];return`${esc(y.near||`Day ${y.day}, km ${y.km}`)}: ${esc(y.what.charAt(0).toLowerCase()+y.what.slice(1))}`};
+  const done=r.reps.filter(x=>!x.fail),left=r.reps.filter(x=>x.fail),sg=(v,u,d=0)=>`${v>=0?'+':'−'}${Math.abs(v).toFixed(d)}<i> ${u}</i>`;
+  const html=`<b class="dlgt">An easier way</b><ul class="kpis ecmp"><li><b>${sg(r.extra,'km',1)}</b><span>distance</span></li><li><b>${sg(Math.round(r.dUp/10)*10,'m')}</b><span>climbing</span></li>${r.hard!=null?`<li><b>${r.hard?'T'+r.hard:'–'}</b><span>hardest</span></li>`:''}</ul>`+
+    `<p class="micro">Goes round</p><ul class="elist ok">${done.map(x=>`<li>${name(x)}</li>`).join('')}</ul>`+
+    (left.length?`<p class="micro">Still on the way, with no easier way nearby</p><ul class="elist">${left.map(x=>`<li>${name(x)}</li>`).join('')}</ul>`:'')+
+    `<p class="small mute">It is saved as a new hike; this one stays as it is.</p>`;
+  if(!await ask(html,{html:true,ok:'Create this hike'}))return;
+  await leaveDetail();await flushSave();const from=D.id,st=D.set||{};HP.viewer.close();viewId=null;
+  runBuild({pts:r.pts,sac:r.sac,wpts:[],names:{}},{name:`${D.name} · easier`.slice(0,80),date:D.date,days:String(D.days.length),start:st.start||'07:00',pace:String(st.pace||1),breaks:!!st.breaks},from)}
+$('#scr-view .cards').addEventListener('click',e=>{const b=e.target.closest('[data-act="easier"]');if(b)findEasier(b)});
+
 /* ---------- the live guide: over the open hike, with its own step in the history so Back closes it ---------- */
 function openGuide(){if(cur!=='view'||HP.guide.active())return;history.pushState({d:depth()+1,guide:1},'',location.hash);syncGuide()}
 function syncGuide(){const g=history.state&&history.state.guide;
   if(g&&cur==='view'&&!HP.guide.active()){if(!HP.guide.open()){history.back();return}$('#scr-view').hidden=true;$('#scr-detail').hidden=true}
   else if(!g&&HP.guide.active())closeGuide()}
-function closeGuide(){HP.guide.close();if(cur==='view'&&!(history.state&&history.state.det))$('#scr-view').hidden=false}
+function closeGuide(now){if(cur==='view'&&!(history.state&&history.state.det))$('#scr-view').hidden=false;if(now){HP.guide.close();return}HP.motion.close($('#guide'),()=>HP.guide.close())}
 HP.openGuide=openGuide;
 $('#guidebtn').addEventListener('click',openGuide);
 // a guide still running when the app was closed: offer to carry on
@@ -420,13 +460,28 @@ async function offerResume(){let g=null;try{g=JSON.parse(localStorage.getItem('h
   if(!g||Date.now()-g.t>12*36e5){el.hidden=true;return}let D=null;try{D=await HP.db.plan(g.id)}catch(e){}if(!D||cur!=='home'){el.hidden=true;return}
   $('#resname').textContent=D.name;el.hidden=false;$('#resgo').onclick=()=>{el.hidden=true;pendingGuide=true;go('#/hike/'+encodeURIComponent(g.id))};
   $('#resno').onclick=()=>{el.hidden=true;try{localStorage.removeItem('hp-guide')}catch(e){}}}
+// until the 3D view draws its first frame it shows the hike's own picture (the one on the home screen), so the picture
+// that grew from the list simply comes alive; the loading message hides behind it
+async function stagePicture(id){const st=$('#stage');st.classList.remove('ph','live');st.style.removeProperty('--ph');
+  const m=lastList.find(x=>x.id===id)||(nextMeta&&nextMeta.id===id?nextMeta:null),c=m&&await coverOf(m,innerWidth>=900).catch(()=>null);if(!c)return;
+  try{const im=new Image();im.src=c.url;await im.decode()}catch(e){return}st.style.setProperty('--ph',`url("${c.url}")`);st.classList.add('ph')}
+new MutationObserver(()=>{const m=$('#msg');if(m.hidden||!/^Building/.test(m.textContent))$('#stage').classList.add('live')}).observe($('#msg'),{attributes:true,attributeFilter:['hidden'],childList:true,characterData:true,subtree:true});
+// the sliding indicators: the map's own controls now, Customize each time it is drawn
+HP.motion.sliders();new MutationObserver(()=>HP.motion.sliders($('#custom'))).observe($('#custom'),{childList:true});
 /* ---------- detail pages: a card's whole story, over the open hike; Back returns to the map ---------- */
-function openDetail(k){if(cur!=='view')return;history.pushState({d:depth()+1,det:k},'',location.hash);syncDetail()}
+let detPlain=false,detSwipe=false;
+function openDetail(k,plain){if(cur!=='view')return;detPlain=!!plain;history.pushState({d:depth()+1,det:k},'',location.hash);syncDetail()}
 HP.openDetail=openDetail;
+const detSrc=k=>{const c=document.querySelector(`#scr-view .card[data-det="${k}"]`);return c&&!c.hidden&&!$('#scr-view').hidden?c:null};
 function syncDetail(){const k=history.state&&history.state.det,el=$('#scr-detail');
-  if(k&&cur==='view'){const r=HP.viewer.detail(k);if(!r){history.back();return}if(el.hidden)viewScroll=scrollY;$('#detail').innerHTML=r.html;$('#detail').dataset.k=k;el.hidden=false;$('#scr-view').hidden=true;$('#more').hidden=true;
-    $('#ttl').textContent=r.title;document.body.dataset.detail=k;window.scrollTo(0,0)}
-  else if(!el.hidden){el.hidden=true;$('#scr-view').hidden=false;$('#more').hidden=cur!=='view';const D=HP.viewer.current();if(cur==='view'&&D)$('#ttl').textContent=D.name;delete document.body.dataset.detail;if(pendingGuide){pendingGuide=false;setTimeout(openGuide,0);return}const y=viewScroll,k=pendingLook,sh=pendingShow;pendingLook=pendingShow=null;requestAnimationFrame(()=>{if(k!=null&&HP.viewer.look)HP.viewer.look(k,true);else if(sh!=null&&HP.viewer.show)HP.viewer.show(sh);else window.scrollTo(0,y)})}}
+  if(k&&cur==='view'){const r=HP.viewer.detail(k);if(!r){history.back();return}const opening=el.hidden,src=opening&&!detPlain?detSrc(k):null;detPlain=false;if(opening)viewScroll=scrollY;
+    HP.motion.vt(()=>{$('#detail').innerHTML=r.html;$('#detail').dataset.k=k;el.hidden=false;$('#scr-view').hidden=true;$('#more').hidden=true;
+      $('#ttl').textContent=r.title;document.body.dataset.detail=k;window.scrollTo(0,0)},{type:!opening?'none':src?'expand':'fade',from:src})}
+  else if(!el.hidden){const k0=$('#detail').dataset.k,y=viewScroll,lk=pendingLook,sh=pendingShow,pg=pendingGuide;pendingLook=pendingShow=null;pendingGuide=false;
+    // looking from a viewpoint, showing a place or opening the guide move on from the map: a plain fade; otherwise the page goes back into its card
+    const plain=lk!=null||sh!=null||pg||detSwipe;detSwipe=false;
+    HP.motion.vt(()=>{el.hidden=true;$('#scr-view').hidden=false;$('#more').hidden=cur!=='view';const D=HP.viewer.current();if(cur==='view'&&D)$('#ttl').textContent=D.name;delete document.body.dataset.detail;if(!plain)window.scrollTo(0,y)},
+      {type:plain?'fade':'collapse',to:plain?null:()=>detSrc(k0)}).then(()=>requestAnimationFrame(()=>{if(lk!=null&&HP.viewer.look)HP.viewer.look(lk,true);else if(sh!=null&&HP.viewer.show)HP.viewer.show(sh);else if(pg)openGuide()}))}}
 // a tap on a card opens its page; buttons, links, fields and the profile's own chart keep their own job
 $('#scr-view .cards').addEventListener('click',e=>{const c=e.target.closest('.card[data-det]');if(!c||e.target.closest('button,a,input,select,label,#prof'))return;openDetail(c.dataset.det)});
 $('#scr-view .cards').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('.card[data-det]')){e.preventDefault();openDetail(e.target.dataset.det)}});
@@ -436,10 +491,16 @@ $('#detail').addEventListener('click',e=>{const b=e.target.closest('[data-dact]'
   if(a==='inv')go('#/inventory');else if(a.startsWith('look:')||a==='walk'){pendingLook=a==='walk'?-1:+a.slice(5);history.back()}
   else if(a.startsWith('show:')){pendingShow=+a.slice(5);history.back()}
   else if(a==='guide'){pendingGuide=true;history.back()}
+  else if(a==='easier')findEasier(b);
   else if(a==='recheck'){if(!navigator.onLine){HP.toast('Connect to the internet to check the trail.');return}HP.toast('Checking the trail…');b.disabled=true;
     Promise.resolve(HP.viewer.recheck()).then(()=>{if(history.state&&history.state.det==='safety'){const r=HP.viewer.detail('safety');if(r)$('#detail').innerHTML=r.html}})}});
-$('#more').addEventListener('click',()=>{$('#sheet').hidden=false;$('#sheet .row').focus()});
-$('#sheet').addEventListener('click',async e=>{const sh=$('#sheet');if(e.target===sh){sh.hidden=true;return}const b=e.target.closest('[data-act]');if(!b)return;sh.hidden=true;
+$('#more').addEventListener('click',()=>{HP.motion.open($('#sheet'));$('#sheet .row').focus()});
+// the hike's menu can be dragged down to close it
+HP.motion.dragDismiss($('#sheet .sheetbox'),()=>{const sh=$('#sheet');return sh.animate({opacity:[1,0]},{duration:180,easing:'ease-out'}).finished.then(()=>{sh.hidden=true})});
+// swipe from the left edge to go back, on the pages that have a way back and no map of their own to drag
+HP.motion.edgeBack(()=>{if(!$('#scr-detail').hidden)return $('#scr-detail');return/^(about|custom|inv)$/.test(cur)?$('#scr-'+cur):null},
+  reset=>{if(!$('#scr-detail').hidden){detSwipe=true;history.back()}else back('fade');setTimeout(reset,700)});
+$('#sheet').addEventListener('click',async e=>{const sh=$('#sheet');if(e.target===sh){HP.motion.close(sh);return}const b=e.target.closest('[data-act]');if(!b)return;HP.motion.close(sh);
   const D=HP.viewer.current();if(!D)return;const act=b.dataset.act;
   if(act==='guide'){openGuide();return}
   if(act==='rename'){const v=await ask('Name of this hike',{input:D.name,ok:'Save'});if(v){D.name=v.slice(0,80);onPlanChange(D);await flushSave()}}

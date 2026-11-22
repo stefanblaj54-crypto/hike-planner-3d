@@ -172,8 +172,8 @@ $('#guide').addEventListener('click',e=>{if(!G)return;const b=e.target.closest('
   if(b.id==='gfollow'){G.follow=true;if(G.fix)G.map.setView([G.fix.lat,G.fix.lon],Math.max(G.map.getZoom(),15));render()}
   else if(b.id==='gcomp')compassOn();
   else if(b.id==='gsnd'){G.snd=!G.snd;try{localStorage.setItem('hp-guide-snd',G.snd?'1':'0')}catch(e){}if(G.snd)tone([[784,.12]]);render()}
-  else if(b.id==='gsos'){G.sos=true;$('#gsosbox').hidden=false;renderSOS()}
-  else if(b.id==='gsosx'){G.sos=false;$('#gsosbox').hidden=true}
+  else if(b.id==='gsos'){G.sos=true;HP.motion.open($('#gsosbox'));renderSOS()}
+  else if(b.id==='gsosx'){G.sos=false;HP.motion.close($('#gsosbox'))}
   else if(b.id==='gshare'||b.id==='gshare2')share()
   else if(b.id==='gexit')history.back()});
 HP.guide={open,close,active:()=>!!G,

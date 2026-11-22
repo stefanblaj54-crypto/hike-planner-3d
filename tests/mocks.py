@@ -162,3 +162,24 @@ def trail(query):
     if _TRAIL is None:
         _TRAIL = gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "osm_baerentrek.json.gz")).read().decode()
     return _TRAIL
+
+
+# BRouter for the easier way: a path from the first point to the last that bows out to one side (as a way round would),
+# graded T2, with WayTags the app reads; "nogo" circles only make it bow a little more
+def brouter(url):
+    qs = parse_qs(urlparse(url).query)
+    pts = [tuple(map(float, p.split(","))) for p in qs.get("lonlats", [""])[0].split("|") if p]
+    (lo0, la0), (lo1, la1) = pts[0], pts[-1]
+    kx = 111320 * math.cos(math.radians((la0 + la1) / 2)); ky = 110540
+    dx, dy = (lo1 - lo0) * kx, (la1 - la0) * ky; L = math.hypot(dx, dy) or 1
+    bow = .18 if "nogos" in qs else .08
+    co, msgs = [], [["Longitude", "Latitude", "Elevation", "Distance", "CostPerKm", "ElevCost", "TurnCost", "NodeCost", "InitialCost", "WayTags", "NodeTags", "Time", "Energy"]]
+    n = 40
+    for k in range(n + 1):
+        t = k / n; off = math.sin(math.pi * t) * bow * L
+        x, y = dx * t - dy / L * off, dy * t + dx / L * off
+        lon, lat = lo0 + x / kx, la0 + y / ky
+        co.append([round(lon, 6), round(lat, 6), 1500.0])
+        if k % 4 == 0 and k: msgs.append([str(round(lon * 1e6)), str(round(lat * 1e6)), "1500", "100", "1000", "0", "0", "0", "0", "highway=path sac_scale=mountain_hiking", "", "0", "0"])
+    length = sum(math.hypot((co[k][0] - co[k - 1][0]) * kx, (co[k][1] - co[k - 1][1]) * ky) for k in range(1, len(co)))
+    return json.dumps({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"creator": "mock", "track-length": str(round(length)), "filtered ascend": "120", "messages": msgs}, "geometry": {"type": "LineString", "coordinates": co}}]})

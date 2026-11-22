@@ -690,6 +690,7 @@ function safety(){const key=[N,DAYS.length,DAYS.map(d=>d.i1).join(','),!!HGT,D.t
   // a level for each point, for the line colours and the strip
   const lv=new Uint8Array(N);for(const x of it)if(x.lvl!=='info')for(let i=x.i0;i<=x.i1;i++)lv[i]=Math.max(lv[i],x.lvl==='bad'?2:1);
   SAFE={T,lvl,lv,items:it,top,marks,junc,hard,mapped:N?mapped/N:0,marked:mapped?marked/mapped:0,EX,cc,ch,far};SAFEK=key;return SAFE}
+const EASYK=/^(sac|vf|glacier|closed|aid|drop|edge|off|vis|hazard)$/,canEase=F=>F.items.some(x=>x.lvl!=='info'&&EASYK.test(x.k));
 const VERD={ok:['Suits a beginner','var(--good)'],warn:['Take care in places','var(--fair)'],bad:['Not for beginners','var(--bad)'],wait:['Not checked yet','var(--mute)']};
 const LVC=['color-mix(in srgb,var(--good) 55%,transparent)','var(--fair)','var(--bad)'];
 const wmChip=(s,cc)=>`<span class="wmc">${HP.osmcSVG(s,18)}${esc(HP.osmcWords(s,cc&&cc[0]))}</span>`;
@@ -698,12 +699,13 @@ function safeStrip(F){const tot=R.d[N-1]||1;let h='',s=0;for(let i=1;i<=N;i++)if
   return`<div class="sstrip" aria-hidden="true">${h}${DAYS.slice(0,-1).map(d=>`<b style="left:${(R.d[d.i1]/tot*100).toFixed(2)}%"></b>`).join('')}</div>`}
 function renderSafety(){const el=$('#safecard');if(!el||!R)return;const F=safety(),T=F.T,cc=F.cc;
   const head=`<div class="ch"><h2 class="micro">Safety</h2><span class="micro">${T?'trail check':'terrain only'}</span></div>`;
-  if(!T&&!F.EX){el.innerHTML=head+`<p class="small mute">${TRAILRUN?'Checking the paths on the map…':D.trailErr&&navigator.onLine?'The trail data could not be loaded. It tries again next time you open the hike.':'Connect to the internet once to check the trail; the result stays with the hike for offline use.'}</p>`;return}
+  if(!T&&!F.EX){el.innerHTML=head+(TRAILRUN?'<div class="skel sk1"></div><div class="sstrip skel"></div><div class="skel sk2"></div><div class="skel sk3"></div>':'')+`<p class="small mute">${TRAILRUN?'Checking the paths on the map…':D.trailErr&&navigator.onLine?'The trail data could not be loaded. It tries again next time you open the hike.':'Connect to the internet once to check the trail; the result stays with the hike for offline use.'}</p>`;return}
   const[vt,vc]=VERD[F.lvl],top=F.top.slice(0,3),syms=[...new Set(F.marks.map(m=>m.sym))].slice(0,3);
   el.innerHTML=head+`<div class="verd" style="--c:${vc}"><i></i><b>${vt}</b>${TRAILRUN?'<span class="small mute">checking…</span>':''}</div>`+safeStrip(F)+
     (T?`<ul class="kpis sk"><li><b>${F.hard?'T'+F.hard:'–'}</b><span>hardest</span></li><li><b>${Math.round(F.marked*100)}%</b><span>marked</span></li><li><b>${F.junc.length}</b><span>junctions</span></li></ul>`:'')+
     (top.length?`<ul class="alerts sfa">${top.map(x=>`<li class="al ${x.lvl}">${x.what}<small>${whereOf(x)}</small></li>`).join('')}</ul>`:`<p class="small mute">${T?'No hard or exposed places found on the map.':'The paths are not checked yet.'}</p>`)+
     (syms.length?`<div class="wmrow"><span class="micro">Follow</span><div>${syms.map(s=>wmChip(s,cc)).join('')}</div></div>`:'')+
+    (F.lvl==='bad'&&canEase(F)?`<button class="btn small easybtn" data-act="easier">Find an easier way</button>`:'')+
     `<div class="wmrow sos"><span class="micro">Emergency</span><div>${sosList(cc).slice(0,2).map(([n,w])=>`<a class="sosn" href="tel:${n.replace(/\s/g,'')}">${n}</a><span class="small mute">${esc(w.split(',')[0])}</span>`).join('')}</div></div>`}
 function safetyDetail(){const F=safety(),T=F.T,cc=F.cc,[vt,vc]=VERD[F.lvl],multi=DAYS.length>1;
   // the profile of the whole route, coloured by how hard each part is
@@ -737,7 +739,7 @@ function safetyDetail(){const F=safety(),T=F.T,cc=F.cc,[vt,vc]=VERD[F.lvl],multi
     (J?dSec('Turn by turn',J):'')+
     dSec('Help',`<ul class="dlist sosl">${sosList(cc).map(([n,w])=>`<li><a class="sosn" href="tel:${n.replace(/\s/g,'')}">${n}</a><span>${esc(w)}</span></li>`).join('')}</ul><p class="small mute">112 works on any phone network that reaches you. The live guide shows your position to read out to rescuers.</p>`)+
     dMeans(M)+
-    `<div class="dbtns"><button class="btn wide primary" data-dact="guide">Open the live guide</button><button class="btn wide ghost" data-dact="recheck">Check the trail again</button></div>`+
+    `<div class="dbtns"><button class="btn wide primary" data-dact="guide">Open the live guide</button>${canEase(F)?'<button class="btn wide" data-dact="easier">Find an easier way</button>':''}<button class="btn wide ghost" data-dact="recheck">Check the trail again</button></div>`+
     `<p class="dsrc">Paths, grades (SAC scale T1–T6), waymarks, junctions, cliffs, glaciers and stream crossings from OpenStreetMap${T?`, checked ${new Date(T.at).toLocaleDateString('en-GB')}`:''}. Steep drops from the terrain heights (about 25 m detail, so a narrow ledge may not show).${F.ch?' Closures from the Swiss hiking trails (Federal Roads Office, swisstopo).':''}</p>`}}
 // fetch the trail check when there is none yet (or it is out of date), then keep it with the hike
 async function runTrail(force){if(TRAILRUN||!R||!navigator.onLine||!HP.trailCheck)return;if(!force&&trailOK()&&Date.now()-D.trail.at<60*864e5)return;const plan=D;
@@ -1530,7 +1532,7 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
 HP.viewer={open,close,current:()=>D,
   // what the live guide needs: the route, the days, the places, the planned times, the map pictures and the trail check
   state:()=>R&&WALK?{D,R,N,DAYS,PTS,WALK,CLK,BLOBS,S,F:safety(),T:trailOK()?D.trail:null,cc:trailOK()?D.trail.cc||[]:[],sos:sosList(trailOK()?D.trail.cc:[]),TURN}:null,
-  show:i=>{if(!R)return;i=Math.max(0,Math.min(N-1,i|0));if(S.day&&R.day[i]!==S.day)selectDay(R.day[i],false);setIndex(i);if(V3&&V3.focus)V3.focus(i)},recheck:()=>runTrail(true),safety:()=>{if(!R)return null;const F=safety();return{lvl:F.lvl,items:F.items.map(x=>({lvl:x.lvl,k:x.k,i0:x.i0,i1:x.i1,what:x.what.replace(/<[^>]+>/g,''),where:whereOf(x).replace(/<[^>]+>/g,'')})),top:F.top.map(x=>x.k),marks:F.marks.length,junc:F.junc.length,hard:F.hard,mapped:+F.mapped.toFixed(3),marked:+F.marked.toFixed(3),checked:!!F.T}},updateForecast:()=>updateForecast(true),detail:k=>{try{return detail(k)}catch(e){console.error(e);return null}},
+  show:i=>{if(!R)return;i=Math.max(0,Math.min(N-1,i|0));if(S.day&&R.day[i]!==S.day)selectDay(R.day[i],false);setIndex(i);if(V3&&V3.focus)V3.focus(i)},recheck:()=>runTrail(true),safety:()=>{if(!R)return null;const F=safety();return{lvl:F.lvl,items:F.items.map(x=>({lvl:x.lvl,k:x.k,i0:x.i0,i1:x.i1,what:x.what.replace(/<[^>]+>/g,''),where:whereOf(x).replace(/<[^>]+>/g,''),near:nearName(x.i0),day:R.day[x.i0],km:+kmIn(x.i0).toFixed(1)})),top:F.top.map(x=>x.k),marks:F.marks.length,junc:F.junc.length,hard:F.hard,mapped:+F.mapped.toFixed(3),marked:+F.marked.toFixed(3),checked:!!F.T}},updateForecast:()=>updateForecast(true),detail:k=>{try{return detail(k)}catch(e){console.error(e);return null}},
   look:(k,jump)=>{if(V3)V3.look(k,jump)},
   pack:(k,on)=>{if(!D)return;D.packed=D.packed||{};if(on)D.packed[k]=1;else delete D.packed[k];save()}};
 })();

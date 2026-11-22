@@ -47,6 +47,10 @@ async def mock(ctx, log):
         cc = "ch" if 45.8 < lat < 47.8 and 5.9 < lon < 10.5 else "ro" if 43.6 < lat < 48.3 and 20.2 < lon < 29.7 else "it"
         await r.fulfill(status=200, content_type="application/json", body=json.dumps({"address": {"country_code": cc}}), headers=HDR)
     await ctx.route("https://nominatim.openstreetmap.org/reverse**", nomi)
+    # BRouter, for the easier way (the planning map's own routing is not used by these tests)
+    async def brouter(r):
+        log.append("brouter"); await r.fulfill(status=200, content_type="application/json", body=mocks.brouter(r.request.url), headers=HDR)
+    if os.environ.get("BROUTER") != "live": await ctx.route("https://brouter.de/**", brouter)
 
 def watch(pg, errs):
     pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
