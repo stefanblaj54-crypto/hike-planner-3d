@@ -147,3 +147,18 @@ BAER = [
 
 def overpass(elements):
     return json.dumps({"version": 0.6, "elements": elements})
+
+
+# The trail check's Overpass query: real OpenStreetMap paths, marked routes and features around the Bärentrek
+# (fetched once from overpass.osm.ch, ODbL), for any query whose boxes overlap that area; nothing elsewhere.
+_TRAIL = None
+def trail(query):
+    global _TRAIL
+    import gzip, os, re
+    boxes = [tuple(map(float, b)) for b in re.findall(r'\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)', query)]
+    near = any(s < 46.62 and n > 46.47 and w < 7.95 and e > 7.62 for s, w, n, e in boxes)
+    if not near:
+        return json.dumps({"elements": []})
+    if _TRAIL is None:
+        _TRAIL = gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "osm_baerentrek.json.gz")).read().decode()
+    return _TRAIL

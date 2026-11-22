@@ -104,6 +104,9 @@
       <dt>Map</dt><dd><a href="https://opentopomap.org">OpenTopoMap</a> (CC-BY-SA), from <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> data and SRTM heights.</dd>
       <dt>Terrain heights</dt><dd>AWS Terrain Tiles (Mapzen), about 10 to 30 m resolution in the mountains. The light and the shade in hollows are worked out from them on your phone.</dd>
       <dt>Huts, passes, water, place names</dt><dd>OpenStreetMap, through Overpass and Nominatim.</dd>
+      <dt>Trail check</dt><dd><a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> paths along the route, through Overpass: their grades, how visible they are, the marked routes and their waymarks, junctions and signposts, cliffs, glaciers, stream crossings, ladders and chains. In Switzerland also the closures and diversions of the Swiss hiking trails (Federal Roads Office, through <a href="https://map.geo.admin.ch" target="_blank" rel="noopener">geo.admin.ch</a>).</dd>
+      <dt>Live guide map</dt><dd>The hike's own map picture, which works offline; with a connection, the Swiss national map © <a href="https://www.swisstopo.admin.ch" target="_blank" rel="noopener">swisstopo</a> in Switzerland and <a href="https://opentopomap.org">OpenTopoMap</a> elsewhere.</dd>
+      <dt>Emergency numbers</dt><dd>112 everywhere in Europe, on any network that reaches your phone; Rega 1414 in Switzerland (+41 333 333 333 from a phone that is not Swiss), mountain rescue 140 in Austria, Salvamont +40 725 826 668 in Romania. Checked in November 2026.</dd>
       <dt>Weather</dt><dd><a href="https://open-meteo.com">Open-Meteo</a>: the forecast from national weather models, with the wind near the ground and higher up, and climate statistics from the ERA5 reanalysis.</dd>
     </dl>
     <h3>Good to know</h3>
@@ -114,7 +117,9 @@
     <p><b>Wind</b> starts from the forecast near the ground and higher up (about 1,500 and 3,000 m); for a weather type, it blows from where it did on such days in the ERA5 records for these dates. Your phone then lets it flow over the terrain: faster over crests and passes, sheltered behind them, turned along valleys, and with light breezes up the slopes by day and down them at night. It is a simple model, not a full weather simulation, so expect real gusts to vary more.</p>
     <p><b>Best views</b> are found from the terrain alone: how far you can see, how high the mountains around you stand, how deep the valleys drop and which named summits are in clear sight. Clouds, forest and buildings are not counted. <b>First person</b> walks the route at true height, with the light and weather of the hour you would be there.</p>
     <p><b>Inventory</b> keeps your own gear on this phone only. The packing advice names the first item of each kind, and uses general words where you have none.</p>
-    <p><b>Difficulty</b> grades are OpenStreetMap's sac_scale tags (for routes drawn here); steepness is the slope of the path in degrees, averaged over about 200 m. Water points are springs and taps marked on OpenStreetMap; check that they run.</p>
+    <p><b>Safety</b> is checked against the paths mapped in OpenStreetMap. Grades follow the SAC scale: T1 hiking, T2 mountain hiking, T3 demanding (hands at times), T4 and up alpine. In Switzerland the waymarks tell the grade too: yellow T1, white-red-white T2–T3, white-blue-white T4 and up. Steep drops beside the path come from the terrain heights: ground that keeps falling at 42° or more from 10 to 55 m out. A stretch is never called too hard for a beginner from the terrain alone, only from the map's grades, via ferratas, glaciers, closures or long stretches with no path. The check runs once with a connection and stays with the hike; it is done again after two months.</p>
+    <p><b>Live guide</b> uses your phone's GPS and works without a connection. It warns you with a sound when you are more than 40 m from the route for three positions in a row (more when the signal is weak, and never on a very weak signal), points the way back, and chimes as you come to each junction. It keeps the screen on, which uses more battery: carry a power bank. Keep the guide open on the screen: with the phone locked, a web app cannot follow you or warn you. On an iPhone the sound follows the ring/silent switch, and web apps cannot vibrate. Your position stays on your phone unless you share it.</p>
+    <p><b>Difficulty</b> grades are OpenStreetMap's sac_scale tags; steepness is the slope of the path in degrees, averaged over about 200 m. Water points are springs and taps marked on OpenStreetMap; check that they run.</p>
     <p>Heights come from satellite data, so summits can read a little low. The plan is a guide: on the ground, follow the waymarks, check the national weather service, and turn back when conditions change.</p>
     <p class="mute small" id="ver"></p>
   </div>
@@ -168,6 +173,7 @@
       <label class="ck" title="10 minutes' rest every hour"><input type="checkbox" id="breaks"><span class="micro">Rests</span></label>
       <button class="play" id="play">▶ Walk</button>
       <button class="play ghost" id="fpbtn" aria-pressed="false" title="Walk the route at eye height"><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg>First person</button>
+      <button class="play guidego" id="guidebtn" title="Your position on the route, with the next turn"><svg viewBox="0 0 24 24"><path d="M12 2.8l7 17.4-7-3.9-7 3.9z"/></svg>Live guide</button>
     </div>
     <div class="wbar">
       <span class="micro">Weather</span>
@@ -179,6 +185,7 @@
   <!-- the plan in numbers and charts; each fact is shown once -->
   <div class="cards">
     <section class="card" id="brief" data-det="brief" tabindex="0" aria-live="polite"></section>
+    <section class="card" id="safecard" data-det="safety" tabindex="0"></section>
     <section class="card" id="wxcard" data-det="wx" tabindex="0"></section>
     <section class="card" id="windcard" data-det="wind" tabindex="0" hidden></section>
     <section class="card" id="viewscard" data-det="views" tabindex="0" hidden></section>
@@ -209,6 +216,7 @@
 <div class="sheet" id="sheet" hidden>
   <div class="sheetbox" role="dialog" aria-modal="true" aria-labelledby="shttl">
     <h3 id="shttl">This hike</h3>
+    <button class="row" data-act="guide">Start the live guide</button>
     <button class="row" data-act="rename">Rename</button>
     <button class="row" data-act="gpx">Export the route as GPX</button>
     <button class="row" data-act="forecast">Update the forecast</button>
@@ -223,6 +231,25 @@
   <label><span class="micro">Weight in grams, if you know it</span><input id="iedg" type="number" inputmode="numeric" min="0" max="49999" step="1"></label>
   <div class="dlgbtns"><button type="button" class="btn ghost small" id="ieddel">Delete</button><button type="button" class="btn ghost small" id="iedfirst">Use first</button><span class="sp"></span><button type="button" class="btn ghost" id="iedno">Cancel</button><button type="submit" class="btn primary" id="iedok">Save</button></div>
 </form></div>
+<!-- the live guide on the trail: a map with your position, the next turn, the way back when you leave the route -->
+<section class="guide" id="guide" hidden aria-label="Live guide">
+  <div class="gmap" id="gmap"></div>
+  <div class="gtop wait" id="gtop" role="status" aria-live="polite"></div>
+  <div class="gside">
+    <button class="gfab" id="gfollow" hidden aria-label="Back to my position"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="7.5"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3"/></svg></button>
+    <button class="gfab" id="gcomp" aria-label="Compass: turn the arrows with the phone"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 5.5l2.6 6.5H9.4z" class="fill"/><path d="M12 18.5l-2.6-6.5h5.2z"/></svg></button>
+    <button class="gfab" id="gsnd" aria-pressed="true" aria-label="Sound and vibration"><svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.5 4.5 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11" class="on"/><path d="M15.5 9.5l5 5M20.5 9.5l-5 5" class="offx"/></svg></button>
+  </div>
+  <div class="gpanel" id="gpanel">
+    <ul class="kpis gnow"></ul>
+    <div class="gbar"><i></i></div>
+    <ul class="glines"></ul>
+    <div class="gbtns"><button class="btn sosb" id="gsos">SOS</button><button class="btn ghost" id="gshare">Share position</button><button class="btn ghost" id="gexit">Exit</button></div>
+    <p class="gstat" id="gstat"></p>
+  </div>
+  <div class="gsosbox" id="gsosbox" hidden role="dialog" aria-modal="true" aria-label="Emergency"></div>
+</section>
+<div class="resume" id="resume" hidden><span><b>Live guide</b><span id="resname"></span></span><button class="btn small" id="resgo">Continue</button><button class="ib" id="resno" aria-label="Dismiss"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
 <div class="toast" id="toast" role="status" hidden></div>
 <input type="file" id="photoin" accept="image/*" class="vh" tabindex="-1" aria-hidden="true">
 
@@ -236,7 +263,9 @@
 <script src="lib/leaflet/leaflet.js"></script>
 <script src="js/core.js"></script>
 <script src="js/build.js"></script>
+<script src="js/trail.js"></script>
 <script src="js/viewer.js"></script>
+<script src="js/guide.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

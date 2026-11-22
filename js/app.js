@@ -6,9 +6,9 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='1.9';
+const VERSION='2.0';
 const SCREENS=['home','new','build','view','custom','about','inv','detail'];
-let cur='',viewId=null,building=null,installEvt=null,pendingDet=null,pendingLook=null,viewScroll=0;
+let cur='',viewId=null,building=null,installEvt=null,pendingDet=null,pendingLook=null,pendingShow=null,pendingGuide=false,viewScroll=0;
 
 /* ---------- navigation ---------- */
 function show(name,title){cur=name;SCREENS.forEach(s=>{$('#scr-'+s).hidden=s!==name});document.body.dataset.screen=name;
@@ -20,7 +20,8 @@ function replace(hash){history.replaceState({d:depth()},'',hash);route()}
 function back(){if(depth()>0)history.back();else replace('#/')}
 async function route(){
   const h=location.hash.replace(/^#\/?/,''),target=h.startsWith('hike/')?'view':h==='new'?'new':h==='customize'?'custom':h==='about'?'about':h==='inventory'?'inv':'home';
-  if(cur==='view'&&target==='view'&&decodeURIComponent(h.slice(5))===viewId){syncDetail();return}
+  if(cur==='view'&&target==='view'&&decodeURIComponent(h.slice(5))===viewId){syncDetail();syncGuide();return}
+  if(HP.guide.active())closeGuide();
   if(building&&target!=='new')cancelBuild();
   if(cur==='view'&&(target!=='view'||h.slice(5)!==viewId)){await flushSave();HP.viewer.close();viewId=null}
   if(updPending&&(target==='home'||target==='about')){try{sessionStorage.setItem('hp-upd',Date.now())}catch(e){}location.reload();return}
@@ -29,7 +30,7 @@ async function route(){
   if(target==='custom'){if(cur!=='custom'){show('custom','Customize');renderCustom()}return}
   if(target==='about'){show('about','About');$('#ver').textContent=`Version ${VERSION}`;return}
   if(target==='inv'){if(cur!=='inv'){show('inv','Inventory');renderInv()}return}
-  showHome()}
+  showHome();offerResume()}
 addEventListener('popstate',route);
 $('#back').addEventListener('click',()=>{if(cur==='build'){cancelBuild();show('new','New hike');refreshNewMap();return}back()});
 // on the home screen the header floats over the sky until the page scrolls past it
@@ -404,24 +405,43 @@ addEventListener('visibilitychange',()=>{if(document.hidden)flushSave()});addEve
 async function openHike(id){if(cur==='view'&&viewId===id)return;
   let D,blobs;try{D=await HP.db.plan(id);if(D){blobs={};for(const k of['topo','relief','sat','dem'])blobs[k]=await HP.db.blob(id+':'+k)}}catch(e){HP.toast('This hike could not be read: '+e.message)}
   if(!D){HP.toast('This hike is no longer saved on this phone.');replace('#/');return}
-  if(!D.id)D.id=id;viewId=id;show('view',D.name);HP.viewer.open(D,blobs,onPlanChange);if(pendingDet){const k=pendingDet;pendingDet=null;setTimeout(()=>openDetail(k),60)}}
+  if(!D.id)D.id=id;viewId=id;show('view',D.name);HP.viewer.open(D,blobs,onPlanChange);if(pendingDet){const k=pendingDet;pendingDet=null;setTimeout(()=>openDetail(k),60)}
+  if(pendingGuide){pendingGuide=false;setTimeout(openGuide,60)}}
+/* ---------- the live guide: over the open hike, with its own step in the history so Back closes it ---------- */
+function openGuide(){if(cur!=='view'||HP.guide.active())return;history.pushState({d:depth()+1,guide:1},'',location.hash);syncGuide()}
+function syncGuide(){const g=history.state&&history.state.guide;
+  if(g&&cur==='view'&&!HP.guide.active()){if(!HP.guide.open()){history.back();return}$('#scr-view').hidden=true;$('#scr-detail').hidden=true}
+  else if(!g&&HP.guide.active())closeGuide()}
+function closeGuide(){HP.guide.close();if(cur==='view'&&!(history.state&&history.state.det))$('#scr-view').hidden=false}
+HP.openGuide=openGuide;
+$('#guidebtn').addEventListener('click',openGuide);
+// a guide still running when the app was closed: offer to carry on
+async function offerResume(){let g=null;try{g=JSON.parse(localStorage.getItem('hp-guide')||'null')}catch(e){}const el=$('#resume');
+  if(!g||Date.now()-g.t>12*36e5){el.hidden=true;return}let D=null;try{D=await HP.db.plan(g.id)}catch(e){}if(!D||cur!=='home'){el.hidden=true;return}
+  $('#resname').textContent=D.name;el.hidden=false;$('#resgo').onclick=()=>{el.hidden=true;pendingGuide=true;go('#/hike/'+encodeURIComponent(g.id))};
+  $('#resno').onclick=()=>{el.hidden=true;try{localStorage.removeItem('hp-guide')}catch(e){}}}
 /* ---------- detail pages: a card's whole story, over the open hike; Back returns to the map ---------- */
 function openDetail(k){if(cur!=='view')return;history.pushState({d:depth()+1,det:k},'',location.hash);syncDetail()}
 HP.openDetail=openDetail;
 function syncDetail(){const k=history.state&&history.state.det,el=$('#scr-detail');
   if(k&&cur==='view'){const r=HP.viewer.detail(k);if(!r){history.back();return}if(el.hidden)viewScroll=scrollY;$('#detail').innerHTML=r.html;$('#detail').dataset.k=k;el.hidden=false;$('#scr-view').hidden=true;$('#more').hidden=true;
     $('#ttl').textContent=r.title;document.body.dataset.detail=k;window.scrollTo(0,0)}
-  else if(!el.hidden){el.hidden=true;$('#scr-view').hidden=false;$('#more').hidden=cur!=='view';const D=HP.viewer.current();if(cur==='view'&&D)$('#ttl').textContent=D.name;delete document.body.dataset.detail;const y=viewScroll,k=pendingLook;pendingLook=null;requestAnimationFrame(()=>{if(k!=null&&HP.viewer.look)HP.viewer.look(k,true);else window.scrollTo(0,y)})}}
+  else if(!el.hidden){el.hidden=true;$('#scr-view').hidden=false;$('#more').hidden=cur!=='view';const D=HP.viewer.current();if(cur==='view'&&D)$('#ttl').textContent=D.name;delete document.body.dataset.detail;if(pendingGuide){pendingGuide=false;setTimeout(openGuide,0);return}const y=viewScroll,k=pendingLook,sh=pendingShow;pendingLook=pendingShow=null;requestAnimationFrame(()=>{if(k!=null&&HP.viewer.look)HP.viewer.look(k,true);else if(sh!=null&&HP.viewer.show)HP.viewer.show(sh);else window.scrollTo(0,y)})}}
 // a tap on a card opens its page; buttons, links, fields and the profile's own chart keep their own job
 $('#scr-view .cards').addEventListener('click',e=>{const c=e.target.closest('.card[data-det]');if(!c||e.target.closest('button,a,input,select,label,#prof'))return;openDetail(c.dataset.det)});
 $('#scr-view .cards').addEventListener('keydown',e=>{if((e.key==='Enter'||e.key===' ')&&e.target.matches('.card[data-det]')){e.preventDefault();openDetail(e.target.dataset.det)}});
 $('#detail').addEventListener('change',e=>{const t=e.target;if(!t.matches('[data-pack]'))return;HP.viewer.pack(t.dataset.pack,t.checked);
   const sec=t.closest('.dsec'),all=sec.querySelectorAll('[data-pack]'),on=[...all].filter(x=>x.checked).length,lab=sec.querySelector('.ch span.micro');if(lab)lab.textContent=lab.textContent.replace(/^\d+\/\d+/,`${on}/${all.length-sec.querySelectorAll('[data-pack^="o:"]').length}`)});
 $('#detail').addEventListener('click',e=>{const b=e.target.closest('[data-dact]');if(!b)return;const a=b.dataset.dact;
-  if(a==='inv')go('#/inventory');else if(a.startsWith('look:')||a==='walk'){pendingLook=a==='walk'?-1:+a.slice(5);history.back()}});
+  if(a==='inv')go('#/inventory');else if(a.startsWith('look:')||a==='walk'){pendingLook=a==='walk'?-1:+a.slice(5);history.back()}
+  else if(a.startsWith('show:')){pendingShow=+a.slice(5);history.back()}
+  else if(a==='guide'){pendingGuide=true;history.back()}
+  else if(a==='recheck'){if(!navigator.onLine){HP.toast('Connect to the internet to check the trail.');return}HP.toast('Checking the trail…');b.disabled=true;
+    Promise.resolve(HP.viewer.recheck()).then(()=>{if(history.state&&history.state.det==='safety'){const r=HP.viewer.detail('safety');if(r)$('#detail').innerHTML=r.html}})}});
 $('#more').addEventListener('click',()=>{$('#sheet').hidden=false;$('#sheet .row').focus()});
 $('#sheet').addEventListener('click',async e=>{const sh=$('#sheet');if(e.target===sh){sh.hidden=true;return}const b=e.target.closest('[data-act]');if(!b)return;sh.hidden=true;
   const D=HP.viewer.current();if(!D)return;const act=b.dataset.act;
+  if(act==='guide'){openGuide();return}
   if(act==='rename'){const v=await ask('Name of this hike',{input:D.name,ok:'Save'});if(v){D.name=v.slice(0,80);onPlanChange(D);await flushSave()}}
   else if(act==='gpx')exportGPX(D);
   else if(act==='forecast'){if(!navigator.onLine){HP.toast('No connection right now.');return}HP.viewer.updateForecast()}

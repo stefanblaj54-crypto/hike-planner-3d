@@ -1,5 +1,5 @@
 """End-to-end checks of the phone app in headless Chrome. Usage: BASE=http://localhost:8777/ python3 tests/test_app.py desktop|mobile|offline"""
-import asyncio, sys, time, datetime, json
+import asyncio, sys, time, datetime, json, urllib.parse
 from playwright.async_api import async_playwright
 import mocks
 
@@ -20,6 +20,9 @@ async def mock(ctx, log):
     async def fc(r):
         log.append("forecast " + r.request.url.split("start_date=")[1][:40]); await r.fulfill(status=200, content_type="application/json", body=mocks.forecast(r.request.url), headers=HDR)
     async def ovp(r):
+        q = urllib.parse.unquote_plus(r.request.post_data or "")
+        if '["highway"]' in q:   # the trail check: real OpenStreetMap paths around the Bärentrek, nothing elsewhere
+            log.append("trail"); await r.fulfill(status=200, content_type="application/json", body=mocks.trail(q), headers=HDR); return
         log.append("overpass"); await r.fulfill(status=200, content_type="application/json", body=mocks.overpass(DYN["pois"]), headers=HDR)
     await ctx.route("https://archive-api.open-meteo.com/**", arch)
     await ctx.route("https://api.open-meteo.com/**", fc)
@@ -34,6 +37,16 @@ async def mock(ctx, log):
         if "f=json" in r.request.url: await r.fulfill(status=200, content_type="application/json", body='{"copyrightText":"Source: Esri, Vantor, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community"}', headers=HDR)
         else: await r.fulfill(status=200, content_type="image/jpeg", body=ESRI_JPG, headers=HDR)
     await ctx.route("https://ibasemaps-api.arcgis.com/**", esri)
+    # Swiss trail closures (none, unless a test sets DYN["closures"]) and the country for the emergency numbers
+    async def closures(r):
+        await r.fulfill(status=200, content_type="application/json", body=json.dumps({"results": DYN.get("closures", [])}), headers=HDR)
+    await ctx.route("https://api3.geo.admin.ch/**", closures)
+    async def nomi(r):
+        if "zoom=3" not in r.request.url: await r.continue_(); return
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(r.request.url).query); lat, lon = float(qs["lat"][0]), float(qs["lon"][0])
+        cc = "ch" if 45.8 < lat < 47.8 and 5.9 < lon < 10.5 else "ro" if 43.6 < lat < 48.3 and 20.2 < lon < 29.7 else "it"
+        await r.fulfill(status=200, content_type="application/json", body=json.dumps({"address": {"country_code": cc}}), headers=HDR)
+    await ctx.route("https://nominatim.openstreetmap.org/reverse**", nomi)
 
 def watch(pg, errs):
     pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
