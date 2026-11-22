@@ -10,6 +10,10 @@ const SACS={0:'No grade',1:'T1 hiking',2:'T2 mountain',3:'T3 demanding',4:'T4 al
 const STC={1:'#37b24d',2:'#f2b705',3:'#fd7e14',4:'#e03131',5:'#862e9c'},STN={1:'Gentle, under 5°',2:'Moderate, 5–10°',3:'Steep, 10–15°',4:'Very steep, 15–20°',5:'Extreme, over 20°'};
 const MONN=['','January','February','March','April','May','June','July','August','September','October','November','December'];
 const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+// ArcGIS World Imagery (Esri) for sharp close-ups outside Switzerland: the owner's ArcGIS Location Platform key, basemaps only,
+// free tier with pay-as-you-go off. When it expires or this month's free use runs out, the view goes back to the other pictures.
+const ESRI_KEY='AAPTaeWnjK3eBR4wrcT5-LAgFWg..DondMwmab5TQtawxEoLPSVJARXpeBr7jV05xOwmRQFh9BdRE0beQz6gPqNhHBy_QTIu0NU31-40eG8xm_exWbu9MT3VHPuHW67DvPqdW_1sN76hm5XdWjTNlnMTKJKco-IqTstbsx9dmoOztq5hWkmd05ip9_IT01T3D6mWeflgz2tKMVVt9kFzb1NklXOTMGIL6Z-dCO27fhpqBtGcTFAKBkTnjpNoZg3iXW63iCOem4CcX6DPwBN1tU6mJnwtlTgQzAT1_OQqgxG7f',ESRI_URL='https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer';
+let esriOff=false,esriBad=0,esriMeta=false;
 let D,S,R,N,DAYS,PTS,overnight={},PX=null,TER=null,MPP=6.5,WALK,BASEW,CLK,SHADE,EXPO,STEEP,SLOPE,FCP=null,TAGT='',OFFICIAL={},AC=null,V3=null,onChange=null,GW={},CELLS=[],ROs=[],BLOBS={};
 const walk=i=>WALK[i],clock=i=>CLK[i],dayOf=i=>DAYS[R.day[i]-1];
 const ptLabel=p=>p.kind==='start'?'Start · '+p.name:p.kind==='end'?'Finish · '+p.name:overnight[p.i]?`Night ${overnight[p.i]} · ${DAYS[overnight[p.i]-1].to}`:p.name+(OFFICIAL[p.name]?' '+nf.format(OFFICIAL[p.name])+' m':'');
@@ -592,6 +596,12 @@ function viewsDetail(){const V=bestViews();if(!V.length)return null;const M=[],s
     `<button class="btn primary wide" data-dact="walk">${VIEWICON}Walk the hike in first person</button>`+dMeans(M)+
     `<p class="dsrc">From the terrain heights: from points every 200 m, how far you can see all round, how high the mountains stand, how deep the valleys drop and which named summits are in clear sight. Clouds, trees and buildings are not counted.</p>`}}
 
+/* ---------- ArcGIS World Imagery ---------- */
+// Esri asks for its data sources to be named exactly as the service gives them; ask once a visit, keep the last answer.
+function esriCredit(){esriMeta=true;try{const c=localStorage.getItem('hp-esri-src');if(c)$('#attrib-esri-src').textContent=c}catch(e){}
+  fetch(`${ESRI_URL}?f=json&token=${ESRI_KEY}`).then(r=>r.json()).then(j=>{const c=j&&typeof j.copyrightText==='string'&&j.copyrightText.replace(/^Source:\s*/i,'').trim();if(c&&c.length<400){$('#attrib-esri-src').textContent=c;try{localStorage.setItem('hp-esri-src',c)}catch(e){}}}).catch(()=>{})}
+function esriFailed(){if(esriOff||++esriBad<3)return;esriOff=true;HP.toast('The sharper ArcGIS satellite pictures are not available right now, so the map uses the usual ones.')}
+
 /* ---------- profile ---------- */
 const SKYC={sun:['#f2c641','Sun'],cu:['#ead58b','Sun and cloud'],shade:['#b8ae8e','Mountain shade'],grey:['#a9b2b8','Grey, overcast'],cloud:['#d9dee2','In cloud or fog'],rain:['#4d8fd4','Rain'],snow:['#b7d3f0','Snow or sleet'],storm:['#7b4fc9','Thunderstorm'],night:['#28344d','Dark'],none:['#e6e8e4','No forecast']};
 const TSTOP=[[-10,'#2c3e94'],[-5,'#3b6fc7'],[0,'#6aa6e0'],[5,'#9fd0e8'],[10,'#b9e3c4'],[15,'#e8e59a'],[20,'#f6c75f'],[25,'#f39a4a'],[30,'#e2563a']];
@@ -698,7 +708,7 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   let mapPicked=false;
   const dropTex=keep=>{for(const k of Object.keys(tex))if(k!==keep){tex[k].then(t=>t.dispose()).catch(()=>{});delete tex[k]}};
   let GTEX=null,HS=null;
-  const credit=()=>{$('#attrib').hidden=S.map!=='sat';$('#attrib-ch').hidden=!(S.map==='sat'&&TILES.swiss())};
+  const credit=()=>{$('#attrib').hidden=S.map!=='sat';$('#attrib-ch').hidden=!(S.map==='sat'&&TILES.swiss());$('#attrib-esri').hidden=!(S.map==='sat'&&TILES.esri())};
   const applyMap=()=>{const m=S.map;WXV.U.uStyle.value=m==='sat'?0:m==='topo'?1:2;
     if(m==='relief'){GTEX=null;dropTex(null);TILES.restyle();credit();return}
     TILES.restyle();credit();
@@ -771,13 +781,16 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     const ZB=Math.max(8,Math.min(15,Math.floor(14-Math.log2(Math.max(W,H)/1024))));
     const ZG=()=>Math.max(ZB,Math.ceil(14-Math.log2(NMAX*dpx()/TS)));
     const OTM=(z,x,y)=>`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${z}/${x}/${y}.png`,SWISS=(z,x,y)=>`https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/${z}/${x}/${y}.jpeg`;
-    const prov=t=>S.map==='topo'?{zmax:17,url:OTM}:S.map==='sat'&&t.lat>45.78&&t.lat<47.86&&t.lon>5.92&&t.lon<10.53?{zmax:18,url:SWISS,swiss:true}:null;
+    const ESRI=(z,x,y)=>`${ESRI_URL}/tile/${z}/${y}/${x}?token=${ESRI_KEY}`,PO={zmax:17,url:OTM},PS={zmax:18,url:SWISS,swiss:true},PE={zmax:18,url:ESRI,esri:true};
+    const inCH=t=>t.lat>45.78&&t.lat<47.86&&t.lon>5.92&&t.lon<10.53;
+    // the pictures to try for a tile, best first; t.pf counts the ones that failed
+    const prov=t=>{const L=S.map==='topo'?[PO]:S.map==='sat'?(inCH(t)?[PS,PE]:[PE]):[];return L.filter(p=>!(p.esri&&esriOff))[t.pf||0]||null};
     let gEff=99; // the zoom the saved picture already matches: tiles only fetch pictures sharper than that
     const own=t=>{const p=prov(t);return p&&t.z<=p.zmax&&t.z>gEff+.3?p:null};
-    const all=new Map(),idxC=new Map(),build=[],loads=[];let active=0,sel=0,drawnKey='',lastSel=-1e9,dirty=true,shadowAt=0,shadowDue=false,swissOn=false,drawn=[];
+    const all=new Map(),idxC=new Map(),build=[],loads=[];let active=0,sel=0,drawnKey='',lastSel=-1e9,dirty=true,shadowAt=0,shadowDue=false,swissOn=false,esriOn=false,coverPass=false,drawn=[];
     const mk=(z,x,y)=>{const k=z+'/'+x+'/'+y;let t=all.get(k);if(t)return t;const s=span(z),ax=x*s-D.x0,ay=y*s-D.y0;
       t={k,z,x,y,s,ax,ay,r:{x0:Math.max(0,ax),y0:Math.max(0,ay),x1:Math.min(W,ax+s),y1:Math.min(H,ay+s)},mesh:null,mr:{value:new THREE.Vector4(0,0,1,1)},tex:null,ts:0,src:'',split:false,used:0,
-        lat:HP.geo.lat(D.y0+ay+s/2,14),lon:HP.geo.lon(D.x0+ax+s/2,14),h0:minH,h1:maxH,stale:false,queued:false,swiss:false};all.set(k,t);return t};
+        lat:HP.geo.lat(D.y0+ay+s/2,14),lon:HP.geo.lon(D.x0+ax+s/2,14),h0:minH,h1:maxH,stale:false,queued:false,swiss:false,esri:false,pf:0};all.set(k,t);return t};
     const kids=t=>{const out=[];for(let j=0;j<2;j++)for(let i=0;i<2;i++){const c=mk(t.z+1,t.x*2+i,t.y*2+j);if(!c.mesh){c.h0=t.h0;c.h1=t.h1}if(c.r.x1>c.r.x0&&c.r.y1>c.r.y0)out.push(c)}return out};
     const s0=span(ZB),roots=[];for(let y=Math.floor(D.y0/s0);y<=Math.floor((D.y0+H-1)/s0);y++)for(let x=Math.floor(D.x0/s0);x<=Math.floor((D.x0+W-1)/s0);x++)roots.push(mk(ZB,x,y));
     // triangles of an n×n patch plus a skirt hanging down from its border, which hides the cracks between patches of different detail
@@ -808,15 +821,16 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
         if(ks.length&&ks.every(k=>k.mesh)){ks.forEach(k=>visit(k,out));return}}
       if(t.stale&&!t.queued){t.queued=true;build.push(t)}out.push(t)};
     // the sharpest picture available for a tile: its own, else the nearest larger tile's, else the saved picture
-    const setSrc=t=>{let a=t,src=null;while(a){if(a.tex){src=a;break}a=a.z>ZB?all.get((a.z-1)+'/'+(a.x>>1)+'/'+(a.y>>1)):null}
-      const key=src?src.k:GTEX?'g':'w';if(key===t.src)return src;t.src=key;const v=t.mr.value,m=t.mesh.material;
+    const setSrc=t=>{let a=t,src=null;while(a){if(a.tex&&!(coverPass&&a.esri)){src=a;break}a=a.z>ZB?all.get((a.z-1)+'/'+(a.x>>1)+'/'+(a.y>>1)):null}
+      const key=(src?src.k:GTEX?'g':'w')+(coverPass?'c':'');if(key===t.src)return src;t.src=key;const v=t.mr.value,m=t.mesh.material;
       if(src){v.set((t.r.x0-src.ax)/src.s,1-(t.r.y1-src.ay)/src.s,(t.r.x1-t.r.x0)/src.s,(t.r.y1-t.r.y0)/src.s);m.map=src.tex}
       else{v.set(t.r.x0/W,1-t.r.y1/H,(t.r.x1-t.r.x0)/W,(t.r.y1-t.r.y0)/H);m.map=GTEX||white}return src};
     const pump=()=>{while(active<6&&loads.length){const{t,p}=loads.shift();if(t.used<sel-2||!t.mesh||!all.has(t.k)){t.ts=0;continue}active++;const style=S.map;
-      fetch(p.url(t.z,t.x,t.y),{mode:'cors'}).then(r=>{if(!r.ok)throw Error('HTTP '+r.status);return r.blob()})
+      if(p.esri&&!esriMeta)esriCredit();
+      fetch(p.url(t.z,t.x,t.y),{mode:'cors'}).then(r=>{if(p.esri&&r.status!==404&&(!r.ok||!/^image\//.test(r.headers.get('content-type')||''))){esriFailed();throw Error('ArcGIS '+r.status)}if(!r.ok)throw Error('HTTP '+r.status);if(p.esri)esriBad=0;return r.blob()})
         .then(b=>new Promise((ok,no)=>{const im=new Image(),u=URL.createObjectURL(b);im.onload=()=>{URL.revokeObjectURL(u);ok(im)};im.onerror=()=>{URL.revokeObjectURL(u);no(Error('picture'))};im.src=u}))
-        .then(im=>{if(!alive||S.map!==style||!all.has(t.k)){t.ts=0;return}const tx=new THREE.Texture(im);tx.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());tx.needsUpdate=true;t.tex=tx;t.ts=2;t.swiss=!!p.swiss;dirty=true})
-        .catch(()=>{t.ts=3}).finally(()=>{active--;pump()})}};
+        .then(im=>{if(!alive||S.map!==style||!all.has(t.k)){t.ts=0;return}const tx=new THREE.Texture(im);tx.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());tx.needsUpdate=true;t.tex=tx;t.ts=2;t.swiss=!!p.swiss;t.esri=!!p.esri;dirty=true})
+        .catch(()=>{if(!alive||S.map!==style){t.ts=0;return}t.pf=(t.pf||0)+1;t.ts=own(t)?0:3;dirty=true}).finally(()=>{active--;pump()})}};
     const drop=t=>{if(t.mesh){tg.remove(t.mesh);t.mesh.geometry.dispose();t.mesh.material.dispose();t.mesh=null}if(t.tex){t.tex.dispose();t.tex=null}all.delete(t.k)};
     const evict=()=>{const cap=coarse?240:440;let nt=0;for(const t of all.values())if(t.tex)nt++;
       if(all.size<=cap&&nt<=(coarse?56:120))return;const old=[...all.values()].filter(t=>t.used<sel&&t.z>ZB).sort((a,b)=>a.used-b.used);
@@ -835,14 +849,14 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
       const out=[];roots.forEach(r=>visit(r,out));drawn=out;
       const key=out.map(t=>t.k).join(',');
       if(key!==drawnKey){drawnKey=key;const on=new Set(out);for(const t of all.values())if(t.mesh)t.mesh.visible=on.has(t);shadowDue=true}
-      let sw=false;for(const t of out){const src=setSrc(t);if(src&&src.swiss&&t.vis!==false)sw=true;const p=t.vis!==false&&own(t);if(p&&!t.ts){t.ts=1;loads.push({t,p})}}
-      if(sw!==swissOn){swissOn=sw;credit()}
+      let sw=false,es=false;for(const t of out){const src=setSrc(t);if(src&&t.vis!==false){if(src.swiss)sw=true;if(src.esri)es=true}const p=!coverPass&&t.vis!==false&&own(t);if(p&&!t.ts){t.ts=1;loads.push({t,p})}}
+      if(sw!==swissOn||es!==esriOn){swissOn=sw;esriOn=es;credit()}
       pump();evict()}
     roots.forEach(make);
-    return{update,swiss:()=>swissOn,
-      restyle(){for(const t of all.values()){if(t.tex){t.tex.dispose();t.tex=null}t.ts=0;t.src='';t.swiss=false}loads.length=0;swissOn=false;dirty=true},
+    return{update,swiss:()=>swissOn,esri:()=>esriOn,cover(on){coverPass=on;dirty=true},
+      restyle(){for(const t of all.values()){if(t.tex){t.tex.dispose();t.tex=null}t.ts=0;t.src='';t.swiss=t.esri=false;t.pf=0}loads.length=0;swissOn=esriOn=false;dirty=true},
       heights(){for(const t of all.values())if(t.mesh)t.stale=true;roots.forEach(t=>{t.queued=true;build.push(t)});dirty=true},
-      stats:()=>({dpx:+dpx().toFixed(2),onScreen:drawn.filter(t=>t.vis!==false).length,zs:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.z]=(o[t.z]||0)+1,o),{}),drawn:drawn.length,maxZ:Math.max(0,...drawn.map(t=>t.z)),own:drawn.filter(t=>t.tex).length,swiss:swissOn,tiles:all.size,ZB,ZG:ZG()}),
+      stats:()=>({esri:esriOn,esriOff,esriTiles:drawn.filter(t=>t.vis!==false&&t.tex&&t.esri).length,dpx:+dpx().toFixed(2),onScreen:drawn.filter(t=>t.vis!==false).length,zs:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.z]=(o[t.z]||0)+1,o),{}),drawn:drawn.length,maxZ:Math.max(0,...drawn.map(t=>t.z)),own:drawn.filter(t=>t.tex).length,swiss:swissOn,tiles:all.size,ZB,ZG:ZG()}),
       dispose(){for(const t of [...all.values()])drop(t);group.remove(tg)}}})();
   const v=new THREE.Vector3();let down=null,playing=null,raf=0;
   const pick=(e,tol)=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,[a,b]=S.day?[DAYS[S.day-1].i0,DAYS[S.day-1].i1]:[0,N-1];let best=-1,bd=tol*tol;
@@ -929,9 +943,9 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   const snap=(cw,ch)=>{const sv={p:camera.position.clone(),t:controls.target.clone(),a:camera.aspect,wx:S.wx},mv=marker.visible,now=performance.now();
     camera.aspect=cw/ch;camera.updateProjectionMatrix();fitCover(cw<ch);
     if(S.wx!=='plain'){S.wx='plain';WXV.time(true)}marker.visible=halo.visible=false;LM.forEach(m=>m.resolution.set(cw,ch));
-    WXV.frame(now);TILES.update(now);renderer.shadowMap.needsUpdate=true;
+    TILES.cover(true);WXV.frame(now);TILES.update(now);renderer.shadowMap.needsUpdate=true;
     const rt=new THREE.WebGLRenderTarget(cw,ch,{samples:renderer.capabilities.isWebGL2?4:0});renderer.setRenderTarget(rt);renderer.render(scene,camera);
-    const px=new Uint8Array(cw*ch*4);renderer.readRenderTargetPixels(rt,0,0,cw,ch,px);renderer.setRenderTarget(null);rt.dispose();
+    const px=new Uint8Array(cw*ch*4);renderer.readRenderTargetPixels(rt,0,0,cw,ch,px);renderer.setRenderTarget(null);rt.dispose();TILES.cover(false);
     S.wx=sv.wx;camera.aspect=sv.a;camera.updateProjectionMatrix();camera.position.copy(sv.p);controls.target.copy(sv.t);controls.update();
     LM.forEach(m=>m.resolution.set(stage.clientWidth,stage.clientHeight));marker.visible=halo.visible=mv;WXV.time(true);renderer.shadowMap.needsUpdate=true;
     const c2=document.createElement('canvas');c2.width=cw;c2.height=ch;const x2=c2.getContext('2d'),im=x2.createImageData(cw,ch);
@@ -970,11 +984,11 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   // bring the 3D view into sight when a walk starts from further down the page
   const reveal=jump=>{const r=stage.getBoundingClientRect(),hh=$('#top').offsetHeight||0;if(r.top<hh-2||r.bottom>innerHeight+2)window.scrollTo({top:Math.max(0,scrollY+r.top-hh),behavior:jump||matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'})};
   function fpEnter(km,{play=true,face=null}={}){if(playing)stopPlay();glide=null;fly=null;
-    if(!FP){FP={sv:{fov:camera.fov,ex:S.ex},speed:0};if(S.ex!==1)setEx(1);controls.enabled=false;camera.fov=camera.aspect<1?68:58;camera.near=4;camera.updateProjectionMatrix();lines.forEach(l=>l.position.y=-13);fpEl.hidden=false;stage.classList.add('fp');$('#fpbtn').setAttribute('aria-pressed','true');hideHint()}
+    if(!FP){FP={sv:{fov:camera.fov,ex:S.ex,lw:LM.map(m=>m.linewidth)},speed:0};LM.forEach(m=>m.linewidth*=.6);if(S.ex!==1)setEx(1);controls.enabled=false;camera.fov=camera.aspect<1?68:58;camera.near=4;camera.updateProjectionMatrix();lines.forEach(l=>l.position.y=-13);fpEl.hidden=false;stage.classList.add('fp');$('#fpbtn').setAttribute('aria-pressed','true');hideHint()}
     km=Math.max(0,Math.min(R.d[N-1],km));
     Object.assign(FP,{km,play,yaw:null,ly:0,lp:0,pt:0,y:null,touch:0,pause:face!=null&&!play?Infinity:0,face,fel:0});
     const t=face!=null?fpStops().find(t=>t.v&&Math.abs(t.km-km)<.03):null;if(t)FP.fel=t.el;fpCaption(t);const i=fpAt(km,fpV);FP.myI=i;if(S.i!==i)setIndex(i);fpSync()}
-  function fpExit(){if(!FP)return;const sv=FP.sv;FP=null;FPT.clear();fpEl.hidden=true;fpCap.hidden=true;stage.classList.remove('fp');$('#fpbtn').setAttribute('aria-pressed','false');camera.fov=sv.fov;camera.near=20;camera.updateProjectionMatrix();controls.enabled=true;lines.forEach(l=>l.position.y=0);
+  function fpExit(){if(!FP)return;const sv=FP.sv;FP=null;LM.forEach((m,k)=>m.linewidth=sv.lw[k]);FPT.clear();fpEl.hidden=true;fpCap.hidden=true;stage.classList.remove('fp');$('#fpbtn').setAttribute('aria-pressed','false');camera.fov=sv.fov;camera.near=20;camera.updateProjectionMatrix();controls.enabled=true;lines.forEach(l=>l.position.y=0);
     if(sv.ex!==S.ex)setEx(sv.ex);flyTo(frameDay())}
   function fpCaption(t){if(!t){fpCap.hidden=true;return}fpCap.innerHTML=t.v?`<b>${VIEWICON}${esc(viewName(t.v))}</b><span>${viewWhat(t.v)}</span>`:`<b>${t.end?'Finish':`End of day ${t.day}`}</b><span>${esc(placeName(t.i))} · ${fmtClock(CLK[t.i])}</span>`;fpCap.hidden=false}
   function fpSync(){if(!FP)return;const on=FP.play&&FP.pause!==Infinity;$('#fpplay').innerHTML=on?'❚❚':'▶';$('#fpplay').setAttribute('aria-label',on?'Pause':'Walk on');$('#fpspeed').textContent=FP.speed?'4×':'1×'}
@@ -1018,7 +1032,7 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     WXV.frame(now);TILES.update(now);place();const az=FP?Math.atan2(camera.position.x-controls.target.x,camera.position.z-controls.target.z):controls.getAzimuthalAngle();north.style.transform=`rotate(${az}rad)`;for(const a of $$('#readout .warr'))a.style.transform=`rotate(${az+a.dataset.to*Math.PI/180}rad)`;renderer.render(scene,camera)};
   V3=window.V3={cam:camera,stage,ctl:controls,det:()=>bakeRT?[bakeRT.width,bakeRT.height]:null,cover:(w,h,up)=>{if(up)COVER_UP=up;return snap(w,h)},groundAt:(x,y)=>{const g=groundAt(x,y,new THREE.Vector3());return g&&g.toArray()},toScreen:a=>{const r=cv.getBoundingClientRect(),q=new THREE.Vector3(...a).project(camera);return[r.left+(q.x+1)/2*r.width,r.top+(1-q.y)/2*r.height]},gliding:()=>!!glide,tiles:()=>TILES.stats(),mark(){WXV.time()},times(){WXV.time(true)},strike:hold=>WXV.testStrike(hold),playing:()=>!!playing,windGrid:(nx,day,t)=>{const ny=Math.round(nx*D.h/D.w),o=[];for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){const px=(i+.5)/nx*D.w,py=(j+.5)/ny*D.h,w=windAt(px,py,day,t);o.push([px,py,+w.e.toFixed(2),+w.n.toFixed(2),Math.round(TER.at(px,py))])}return{nx,ny,w:D.w,h:D.h,o}},wind:i=>{const c=cond(i,CLK[i]);return{v:+c.v.toFixed(1),g:+c.g.toFixed(1),dir:Math.round(c.dir),from:HP.compass(c.dir)}},
     dayChanged(doFly){recolor();if(playing&&R.day[playing.d.i0]!==S.day)stopPlay();if(FP){const d=S.day&&DAYS[S.day-1];if(d&&(FP.km<R.d[d.i0]-.01||FP.km>R.d[d.i1]+.01))fpEnter(R.d[d.i0],{play:FP.play});return}if(doFly)flyTo(frameDay())},
-    dayEndKm:n=>R.d[DAYS[n-1].i1],viewsDebug:()=>VDBG,look(k,jump){const V=bestViews(),v=V[k];reveal(jump);if(!(k>=0)||!v){fpEnter(S.day?R.d[DAYS[S.day-1].i0]:0);return}fpEnter(R.d[v.i],{play:false,face:v.az})},firstPerson(km){fpEnter(km||0)},fpExit,
+    dayEndKm:n=>R.d[DAYS[n-1].i1],viewsDebug:()=>VDBG,orbitAt(i,dist,az=0,pol=1.05){if(FP)fpExit();fly=null;glide=null;const t=P(Math.max(0,Math.min(N-1,i)));controls.target.copy(t);camera.position.set(t.x+dist*Math.sin(pol)*Math.sin(az),t.y+dist*Math.cos(pol),t.z+dist*Math.sin(pol)*Math.cos(az));controls.update()},look(k,jump){const V=bestViews(),v=V[k];reveal(jump);if(!(k>=0)||!v){fpEnter(S.day?R.d[DAYS[S.day-1].i0]:0);return}fpEnter(R.d[v.i],{play:false,face:v.az})},firstPerson(km){fpEnter(km||0)},fpExit,
     fp:()=>FP?{km:+FP.km.toFixed(3),play:FP.play,pause:FP.pause===Infinity?'hold':FP.pause?'stop':'',ex:S.ex,fov:camera.fov,day:S.day,i:S.i,cap:fpCap.hidden?'':fpCap.textContent,next:(fpStops().find(t=>t.km>FP.km+1e-6)||{}).km,left:FP.pause&&FP.pause!==Infinity?Math.round(FP.pause-performance.now()):0}:null,
     relabel(){makeLabels();recolor()},
     dispose(){alive=false;cancelAnimationFrame(raf);FP=null;stage.classList.remove('fp');fpEl.hidden=true;fpCap.hidden=true;$('#fpbtn').setAttribute('aria-pressed','false');TILES.dispose();[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};

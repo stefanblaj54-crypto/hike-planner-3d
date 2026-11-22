@@ -10,6 +10,7 @@ DYN = {"pois": list(mocks.BAER)}
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(HERE, "shots") + "/"; os.makedirs(SHOTS, exist_ok=True)
 GPX = os.path.join(HERE, "baerentrek.gpx"); PHOTO = os.path.join(HERE, "test_photo.jpg")
+ESRI_JPG = open(os.path.join(HERE, "esri_mock.jpg"), "rb").read()
 CHROME = os.environ.get("CHROME") or ("/usr/bin/google-chrome" if os.path.exists("/usr/bin/google-chrome") else None)  # None: Playwright's own Chromium
 HDR = {"access-control-allow-origin": "*"}
 
@@ -27,6 +28,12 @@ async def mock(ctx, log):
     await ctx.route("https://ensemble-api.open-meteo.com/**", ens)
     await ctx.route("https://overpass-api.de/**", ovp)
     await ctx.route("https://overpass.kumi.systems/**", ovp)
+    # ArcGIS World Imagery: a made-up picture, so tests don't use the key's free allowance (ESRI=live lets them through)
+    async def esri(r):
+        if os.environ.get("ESRI") == "live": await r.continue_(); return
+        if "f=json" in r.request.url: await r.fulfill(status=200, content_type="application/json", body='{"copyrightText":"Source: Esri, Vantor, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community"}', headers=HDR)
+        else: await r.fulfill(status=200, content_type="image/jpeg", body=ESRI_JPG, headers=HDR)
+    await ctx.route("https://ibasemaps-api.arcgis.com/**", esri)
 
 def watch(pg, errs):
     pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))
