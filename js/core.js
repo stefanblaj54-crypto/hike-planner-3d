@@ -25,17 +25,46 @@ HP.geo={
   hav:(la1,lo1,la2,lo2)=>{const R=6371008.8,p1=la1*Math.PI/180,p2=la2*Math.PI/180,dp=p2-p1,dl=(lo2-lo1)*Math.PI/180;return 2*R*Math.asin(Math.min(1,Math.sqrt(Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2)))}
 };
 
-// network with a timeout
-HP.fetchJSON=async(url,opt={},ms=30000)=>{const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
-  try{const r=await fetch(url,{...opt,signal:c.signal});const txt=await r.text();if(!r.ok)throw Error((txt||r.statusText).slice(0,160));return JSON.parse(txt)}
-  catch(e){if(e.name==='AbortError')throw Error('The server took too long to answer');throw e}finally{clearTimeout(t)}};
+// A short record of what went wrong on this phone (since 2.3), for "Copy problem details" in About. Nothing leaves the phone
+// unless the person copies it; keys and exact positions are cut out.
+HP.log=(()=>{const K='hp-log',MAX=40;let L=[],t=0;try{L=JSON.parse(localStorage.getItem(K)||'[]');if(!Array.isArray(L))L=[]}catch(e){L=[]}
+  const clean=x=>String(x==null?'':x).replace(/(token|key|apikey|api_key)=[^&\s"')]+/gi,'$1=…').replace(/(-?\d{1,3}\.\d{2})\d{2,}/g,'$1').slice(0,400);
+  const save=()=>{clearTimeout(t);t=setTimeout(()=>{try{localStorage.setItem(K,JSON.stringify(L.slice(-MAX)))}catch(e){}},400)};
+  const add=(k,m,where)=>{m=clean(m);if(!m)return;const l=L[L.length-1],h=location.hash.split('/').slice(0,2).join('/')||'#/';
+    if(l&&l.k===k&&l.m===m){l.n=(l.n||1)+1;l.t=Date.now()}else{L.push({t:Date.now(),k,m,w:clean(where||''),h,v:HP.update?HP.update.version:''});if(L.length>MAX)L.splice(0,L.length-MAX)}save()};
+  const noise=m=>/ResizeObserver loop|^Script error\.?$|AbortError|The user aborted|cancelled|Load failed$/i.test(m||'');
+  addEventListener('error',e=>{if(e.target&&e.target!==window)return;const m=e.message||(e.error&&e.error.message)||'';if(noise(m))return;
+    add('error',m,(e.filename||'').split('/').pop()+':'+(e.lineno||0)+':'+(e.colno||0))},true);
+  addEventListener('unhandledrejection',e=>{const r=e.reason,m=r&&(r.message||r)||'';if(noise(String(m))||r&&r.name==='AbortError')return;
+    add('promise',m,r&&r.stack?(String(r.stack).split('\n')[1]||'').trim():'')});
+  // the app's own warnings that carry an error ("satellite", "places", "trail"…) are noted too
+  const cw=console.warn.bind(console);console.warn=(...a)=>{cw(...a);try{const e=a.find(x=>x&&typeof x==='object'&&x.message);
+    if(e&&!noise(e.message)&&e.name!=='AbortError')add('warn',(typeof a[0]==='string'?a[0]+': ':'')+e.message)}catch(x){}};
+  const host=u=>{try{return new URL(u,location.href).host}catch(e){return''}};
+  return{add,note:(m,w)=>add('note',m,w),net:(u,m)=>add('net',m,host(u)),list:()=>L.slice(),clear(){L=[];try{localStorage.removeItem(K)}catch(e){}}}})();
+
+// network with a timeout, so a request that hangs on a weak signal can't hold anything up for ever; the caller's own signal
+// (a Cancel button) stops it too. HP.fetchT gives the response, with its body read inside the time allowed.
+const TMUL=(()=>{try{return +localStorage.getItem('hp-tmul')||1}catch(e){return 1}})(); // tests shorten the waits
+HP.fetchT=async(url,opt={},ms=20000,as='blob')=>{const c=new AbortController(),up=opt.signal,on=()=>c.abort(),t=setTimeout(on,ms*TMUL);
+  if(up){if(up.aborted)c.abort();else up.addEventListener('abort',on,{once:true})}
+  try{const r=await fetch(url,{...opt,signal:c.signal}),body=as?await r[as]():null;return{r,ok:r.ok,status:r.status,type:r.headers.get('content-type')||'',body}}
+  catch(e){if(up&&up.aborted){const a=Error('Cancelled');a.name='AbortError';throw a}
+    if(e.name==='AbortError'){const x=Error('The server took too long to answer');x.timeout=true;throw x}throw e}
+  finally{clearTimeout(t);if(up)up.removeEventListener('abort',on)}};
+HP.fetchJSON=async(url,opt={},ms=30000)=>{let x;
+  try{x=await HP.fetchT(url,opt,ms,'text')}catch(e){if(e.name!=='AbortError')HP.log.net(url,e.message);throw e}
+  if(!x.ok){const e=Error((x.body||x.r.statusText||'HTTP '+x.status).slice(0,160));HP.log.net(url,e.message);throw e}
+  try{return JSON.parse(x.body)}catch(e){HP.log.net(url,'not JSON: '+String(x.body).slice(0,60));throw Error('The server sent an answer the app could not read')}};
 
 // storage: hikes (list data), plans (full data), blobs (map pictures)
 HP.db=(()=>{let dbp=null;
   const open=()=>dbp||(dbp=new Promise((ok,no)=>{let r;try{r=indexedDB.open('hike-planner-3d',1)}catch(e){no(e);return}
     r.onupgradeneeded=()=>{const d=r.result;for(const s of['hikes','plans','blobs'])if(!d.objectStoreNames.contains(s))s==='hikes'?d.createObjectStore(s,{keyPath:'id'}):d.createObjectStore(s)};
     r.onsuccess=()=>ok(r.result);r.onerror=()=>no(r.error)}));
-  const run=async(stores,mode,fn)=>{const d=await open();return new Promise((ok,no)=>{const t=d.transaction(stores,mode);let out;const q=fn(t);t.oncomplete=()=>ok(q&&'result'in q?q.result:out);t.onerror=()=>no(t.error);t.onabort=()=>no(t.error||Error('Storage was refused'))})};
+  // a full phone is said plainly, with what to do about it
+  const why=e=>{if(e&&(e.name==='QuotaExceededError'||/quota/i.test(e.message||''))){const x=Error('The phone has no more room for this app. Delete hikes you no longer need, or free some space, then try again.');x.name='QuotaExceededError';HP.log.add('storage',e.message||e.name);return x}return e||Error('Storage was refused')};
+  const run=async(stores,mode,fn)=>{const d=await open();return new Promise((ok,no)=>{const t=d.transaction(stores,mode);let out;const q=fn(t);t.oncomplete=()=>ok(q&&'result'in q?q.result:out);t.onerror=()=>no(why(t.error));t.onabort=()=>no(why(t.error))})};
   return{
     list:()=>run('hikes','readonly',t=>t.objectStore('hikes').getAll()),
     meta:id=>run('hikes','readonly',t=>t.objectStore('hikes').get(id)),
@@ -44,7 +73,12 @@ HP.db=(()=>{let dbp=null;
     save:(meta,plan,blobs)=>run(['hikes','plans','blobs'],'readwrite',t=>{t.objectStore('hikes').put(meta);if(plan)t.objectStore('plans').put(plan,meta.id);for(const[k,b]of Object.entries(blobs||{}))if(b)t.objectStore('blobs').put(b,meta.id+':'+k)}),
     putMeta:meta=>run('hikes','readwrite',t=>t.objectStore('hikes').put(meta)),
     putPlan:(id,plan)=>run('plans','readwrite',t=>t.objectStore('plans').put(plan,id)),
-    remove:id=>run(['hikes','plans','blobs'],'readwrite',t=>{t.objectStore('hikes').delete(id);t.objectStore('plans').delete(id);for(const k of['topo','relief','sat','dem','cover','coverw'])t.objectStore('blobs').delete(id+':'+k)}),
+    remove:id=>run(['hikes','plans','blobs'],'readwrite',t=>{t.objectStore('hikes').delete(id);t.objectStore('plans').delete(id);for(const k of['topo','relief','sat','dem','cover','coverw','vec'])t.objectStore('blobs').delete(id+':'+k);
+      t.objectStore('blobs').delete(IDBKeyRange.bound(id+':m:',id+':m:\uffff'))}),
+    // many pictures in one go, the keys under a prefix, and all of them at once (the saved map strips, since 2.3)
+    putMany:pairs=>run('blobs','readwrite',t=>{const st=t.objectStore('blobs');for(const[k,b]of pairs)st.put(b,k)}),
+    keys:pre=>run('blobs','readonly',t=>t.objectStore('blobs').getAllKeys(IDBKeyRange.bound(pre,pre+'\uffff'))),
+    delPrefix:pre=>run('blobs','readwrite',t=>t.objectStore('blobs').delete(IDBKeyRange.bound(pre,pre+'\uffff'))),
     putBlob:(k,b)=>run('blobs','readwrite',t=>t.objectStore('blobs').put(b,k)),
     delBlob:k=>run('blobs','readwrite',t=>t.objectStore('blobs').delete(k))
   }})();
@@ -119,6 +153,39 @@ HP.inv={
   // the person's item for a kind, marked as theirs, or the general word
   word(k,fallback){const x=this.first(k),f=fallback!=null?fallback:(HP.INVK[k]||{}).word||k;return x?`<span class="own">${HP.u.esc(x.name)}</span>`:HP.u.esc(f)}};
 
+// Backup (since 2.3): every hike's plan, its list entry, the inventory and the look, in one small file. Pictures, heights and
+// saved map strips are left out: the phone makes them again the first time each hike opens with a connection.
+HP.backup=(()=>{const TA={Float32Array,Float64Array,Int8Array,Uint8Array,Uint8ClampedArray,Int16Array,Uint16Array,Int32Array,Uint32Array};
+  const b64=u=>{let s='';for(let i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));return btoa(s)};
+  const unb64=s=>{const b=atob(s),u=new Uint8Array(b.length);for(let i=0;i<b.length;i++)u[i]=b.charCodeAt(i);return u};
+  const enc=v=>{if(v==null||typeof v!=='object')return v;if(ArrayBuffer.isView(v)&&TA[v.constructor.name])return{$t:v.constructor.name,d:b64(new Uint8Array(v.buffer,v.byteOffset,v.byteLength))};
+    if(v instanceof Blob)return null;if(v instanceof Map)return{$m:[...v].map(([k,x])=>[k,enc(x)])};if(v instanceof Set)return{$s:[...v].map(enc)};if(v instanceof Date)return{$d:+v};
+    if(Array.isArray(v))return v.map(enc);const o={};for(const k of Object.keys(v))o[k]=enc(v[k]);return o};
+  const dec=v=>{if(v==null||typeof v!=='object')return v;if(Array.isArray(v))return v.map(dec);
+    if(typeof v.$t==='string'&&TA[v.$t]&&typeof v.d==='string'){const u=unb64(v.d),T=TA[v.$t];return new T(u.buffer,0,u.byteLength/T.BYTES_PER_ELEMENT)}
+    if(Array.isArray(v.$m))return new Map(v.$m.map(([k,x])=>[k,dec(x)]));if(Array.isArray(v.$s))return new Set(v.$s.map(dec));if(typeof v.$d==='number'&&Object.keys(v).length===1)return new Date(v.$d);
+    const o={};for(const k of Object.keys(v))o[k]=dec(v[k]);return o};
+  const LS=['hp-inv','hp-look'];
+  async function make(){const metas=await HP.db.list(),hikes=[];for(const m of metas){const D=await HP.db.plan(m.id);if(D)hikes.push({meta:enc(m),plan:enc(D)})}
+    const ls={};for(const k of LS){try{const v=localStorage.getItem(k);if(v)ls[k]=v}catch(e){}}
+    return JSON.stringify({app:'Hike Planner 3D',kind:'backup',v:1,version:HP.update?HP.update.version:'',made:Date.now(),hikes,ls})}
+  // add the hikes this phone doesn't have, and replace those the backup has a newer copy of; settings only where this phone has none
+  async function restore(text){let j=null;try{j=JSON.parse(text)}catch(e){}
+    if(!j||j.kind!=='backup'||!Array.isArray(j.hikes))throw Error('This file is not a Hike Planner backup.');
+    const have=new Map((await HP.db.list()).map(m=>[m.id,m]));let added=0,updated=0,same=0;
+    for(const h of j.hikes){const m=dec(h.meta),D=dec(h.plan);if(!m||!m.id||!D||!D.route)continue;const cur=have.get(m.id);
+      if(cur&&(cur.updated||0)>=(m.updated||0)){same++;continue}
+      // the map for no signal isn't in the file: a hike new to this phone has none; one already here keeps its own
+      if(!cur){D.cover=0;D.topoTry=0;D.restored=Date.now();delete D.strip}else{const old=await HP.db.plan(m.id);if(old&&old.strip)D.strip=old.strip;else delete D.strip}D.id=m.id;
+      await HP.db.putPlan(m.id,D);await HP.db.putMeta(m);if(cur)updated++;else added++}
+    for(const[k,v]of Object.entries(j.ls||{})){if(!LS.includes(k)||typeof v!=='string')continue;try{
+      if(k==='hp-inv'){const a=JSON.parse(localStorage.getItem(k)||'null'),b=JSON.parse(v);if(!a||!a.items){localStorage.setItem(k,v);continue}
+        for(const[kind,items]of Object.entries(b.items||{})){const mine=a.items[kind]||(a.items[kind]=[]);for(const it of items||[])if(it&&it.name&&!mine.some(x=>x.name===it.name))mine.push(it)}
+        localStorage.setItem(k,JSON.stringify(a))}
+      else if(!localStorage.getItem(k))localStorage.setItem(k,v)}catch(e){}}
+    return{added,updated,same,total:j.hikes.length}}
+  return{make,restore,enc,dec}})();
+
 HP.toast=(msg,ms=3200)=>{const t=$('#toast');if(!t)return;const M=HP.motion;t.textContent=msg;if(M)M.open(t);else t.hidden=false;clearTimeout(t._h);t._h=setTimeout(()=>{if(M)M.close(t);else t.hidden=true},ms)};
 })();
 
@@ -147,6 +214,15 @@ HP.maps={inCH,
   esriOff:false,esriBad:0,
   esriFail(){if(!this.esriOff&&++this.esriBad>=3)this.esriOff=true;return this.esriOff},
   esriOk(){this.esriBad=0},
+  // the marked hiking routes of OpenStreetMap (Waymarked Trails), over the map while planning (since 2.3)
+  routes(map){return L.tileLayer('https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png',{maxZoom:19,maxNativeZoom:17,minZoom:8,opacity:.9,zIndex:6,
+    attribution:'Routes © waymarkedtrails.org (CC-BY-SA)'}).addTo(map)},
+  // the Swiss map saved along a hike (HP.strip): read from the phone's storage only, never the network, in its own pane under the
+  // live map, so it shows wherever the live tiles don't come (no signal); from zoom 14, as 128-pixel tiles one zoom closer
+  stripLayer(map,id,pane){const SL=L.GridLayer.extend({createTile(c,done){const img=document.createElement('img');img.alt='';img.setAttribute('role','presentation');
+      const fin=()=>done(null,img);HP.db.blob(`${id}:m:${c.z+1}/${c.x}/${c.y}`).then(b=>{if(!b){img.onload=img.onerror=fin;img.src=T1;return}
+        const u=URL.createObjectURL(b);img.onload=img.onerror=()=>{URL.revokeObjectURL(u);fin()};img.src=u}).catch(()=>{img.onload=img.onerror=fin;img.src=T1});return img}});
+    return new SL({pane,tileSize:128,minZoom:14,maxZoom:19,minNativeZoom:14,maxNativeZoom:16,updateWhenIdle:true}).addTo(map)},
   // the same maps on a Leaflet map (planning a hike, the live guide): from zoom 11 the Swiss map inside Switzerland, drawn at twice
   // its detail as on its own site, and Esri's Outdoor map around it; each tile comes from the one source that has it
   leaflet(map){const M=HP.maps,ZS=11,box=(l,c)=>{const b=l._tileCoordsToBounds(c);return[b.getSouth(),b.getWest(),b.getNorth(),b.getEast()]};
@@ -164,7 +240,7 @@ HP.maps={inCH,
     else{es=new Es('',{tileSize:512,zoomOffset:-1,maxZoom:19,maxNativeZoom:19}).addTo(map);es.on('tileload',()=>M.esriOk());
       // a picture that didn't come: ask once more to see why, and count it only when Esri itself said no (not when the phone is offline)
       es.on('tileerror',e=>{if(otm)return;if(M.esriOff)return toOTM();const u=e.tile&&e.tile.src;if(!navigator.onLine||probing>2||!u||u.startsWith('data:'))return;probing++;
-        fetch(u,{mode:'cors',cache:'no-store'}).then(r=>{if(r.status!==404&&(!r.ok||!/^image\//.test(r.headers.get('content-type')||''))&&M.esriFail())toOTM()}).catch(()=>{}).finally(()=>probing--)})}
+        HP.fetchT(u,{mode:'cors',cache:'no-store'},10000,null).then(x=>{if(x.status!==404&&(!x.ok||!/^image\//.test(x.type))&&M.esriFail())toOTM()}).catch(()=>{}).finally(()=>probing--)})}
     const sw=new Sw('',{tileSize:128,zoomOffset:1,maxZoom:19,maxNativeZoom:17}).addTo(map);
     map.on('moveend zoomend',credit);map.whenReady(credit);return{sw,get es(){return es},get otm(){return otm}}}};
 })();

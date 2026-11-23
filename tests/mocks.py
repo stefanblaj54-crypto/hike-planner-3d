@@ -129,10 +129,10 @@ BAER = [
     node(2, 46.5934, 7.9091, place="village", name="Lauterbrunnen"),
     node(3, 46.5590, 7.8925, place="village", name="Mürren"),
     node(4, 46.5466, 7.8916, place="village", name="Gimmelwald"),
-    node(5, 46.54516, 7.83831, tourism="alpine_hut", name="Rotstock Hut", ele="2039"),
+    node(5, 46.54516, 7.83831, tourism="alpine_hut", name="Rotstock Hut", ele="2039", phone="+41 33 855 24 64", website="www.example-rotstock.test", opening_hours="Jun 20-Oct 10", reservation="yes", beds="50"),
     node(6, 46.53160, 7.81300, mountain_pass="yes", name="Sefinafurgga", ele="2612"),
     node(7, 46.54735, 7.76154, place="hamlet", name="Griesalp"),
-    node(8, 46.53354, 7.76897, tourism="alpine_hut", name="Berghaus Bundalp"),
+    node(8, 46.53354, 7.76897, tourism="alpine_hut", name="Berghaus Bundalp", phone="+41 33 676 11 92", opening_hours="May 15-Oct 20"),
     node(9, 46.51110, 7.77018, mountain_pass="yes", name="Hohtürli", ele="2778"),
     node(10, 46.51023, 7.77171, tourism="alpine_hut", name="Blüemlisalphütte", ele="2840"),
     node(11, 46.4985, 7.7290, natural="water", name="Oeschinensee"),
@@ -162,6 +162,25 @@ def trail(query):
     if _TRAIL is None:
         _TRAIL = gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "osm_baerentrek.json.gz")).read().decode()
     return _TRAIL
+
+
+# the official Swiss hiking trails (swisstopo's swissTLM3D, through geo.admin.ch identify): the features along the Bärentrek,
+# collected from the real service in November 2026 (tests/swiss_trails_baerentrek.json.gz), those whose box meets the asked extent
+_SWT = None
+def swiss_trails(url):
+    global _SWT
+    import gzip, os
+    if _SWT is None:
+        _SWT = json.load(gzip.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "swiss_trails_baerentrek.json.gz"), "rt"))
+    qs = parse_qs(urlparse(url).query)
+    w, s, e, n = map(float, qs.get("mapExtent", ["0,0,0,0"])[0].split(","))
+    out = []
+    for f in _SWT:
+        co = f["g"]["coordinates"] if f["g"]["type"] == "LineString" else [p for l in f["g"]["coordinates"] for p in l]
+        xs = [p[0] for p in co]; ys = [p[1] for p in co]
+        if min(xs) <= e and max(xs) >= w and min(ys) <= n and max(ys) >= s:
+            out.append({"layerBodId": "ch.swisstopo.swisstlm3d-wanderwege", "featureId": f["id"], "properties": {"hikingtype": f["t"]}, "geometry": f["g"]})
+    return json.dumps({"results": out})
 
 
 # BRouter for the easier way: a path from the first point to the last that bows out to one side (as a way round would),

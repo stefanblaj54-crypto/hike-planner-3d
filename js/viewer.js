@@ -93,6 +93,25 @@ function wst(t){const k=Math.round(t*60);let s=WXC.get(k);if(s)return s;s=SCN[S.
 const fcH=(i,t)=>(R.day[i]-1)*24+t;
 function fcAt(i,t){const F=D.fc;if(!F)return null;const fp=F.pts[FCP[i]],H=fcH(i,t);if(H<0||H>F.n-1)return null;const a=Math.floor(H),b=Math.min(F.n-1,a+1),w=H-a,o={z:fp.z};
   for(const[k,arr]of Object.entries(fp.h)){const va=arr[a],vb=arr[b];o[k]=k==='code'?(w<.5?va:vb):k==='wd'?va:(va===va&&vb===vb?va+(vb-va)*w:(va===va?va:vb))}return o}
+// Old snow from the winter left on the path (since 2.3). Typical for the date: in the Alps most passes clear between mid-June and
+// early July, and the snow lies longest on slopes facing north. Near the date, the forecast models' snow on the ground (its own snow
+// line, fcSnowLine) takes over, softened where it shows none, as the models' ground is lower than a pass.
+const SNOWD=[[91,1350],[121,1700],[135,1900],[152,2100],[166,2400],[182,2650],[196,2950],[213,3200],[244,3500]]; // day of the year → height of the old snow
+function oldSnowLine(doy,lat){if(lat<0)doy=(doy+183)%366;let z;if(doy<=SNOWD[0][0])z=doy<60?1000:SNOWD[0][1];else if(doy>=SNOWD[SNOWD.length-1][0])z=doy>320?1200:9000;
+  else for(let k=1;k<SNOWD.length;k++)if(doy<=SNOWD[k][0]){const[a,za]=SNOWD[k-1],[b,zb]=SNOWD[k];z=za+(zb-za)*(doy-a)/(b-a);break}
+  return z-(Math.abs(lat)-46.5)*60}
+// which way the ground faces at a route point (from the heights around it): 'n', 's' or ''
+function facing(i){if(!HGT)return'';const x=R.x[i],y=R.y[i],d=1.5,gx=HGT(x+d,y)-HGT(x-d,y),gy=HGT(x,y+d)-HGT(x,y-d);if(Math.hypot(gx,gy)<2*d*MPP*.18)return'';
+  const az=(Math.atan2(-gx,gy)*180/Math.PI+360)%360;   // the way the slope goes down (x runs east, y south)
+  return az<55||az>305?'n':az>125&&az<235?'s':''}
+// per point: 0 no snow, 1 patches possible, 2 snow likely; with the reason (season or forecast)
+const doyOf=d=>Math.round((d-new Date(d.getFullYear(),0,1))/864e5)+1;
+function snowAt(){const lv=new Uint8Array(N),why=new Uint8Array(N),lat=D.center.lat;let lastDay=-1,line=0;
+  for(let i=0;i<N;i+=1){const dn=R.day[i];if(dn!==lastDay){lastDay=dn;line=oldSnowLine(doyOf(hikeDate(dn)),lat)}
+    const f=facing(i),z=line+(f==='n'?-200:f==='s'?150:0),e=R.e[i];let l=e>=z?2:e>=z-300?1:0,w=1;
+    if(D.fc){const H=fcH(i,CLK[i]);if(H>=0&&H<=D.fc.n-1){const s=fcSnowLine(i,CLK[i]);if(s!==null){l=e>=s?2:e>=s-200?Math.max(1,l?1:0):0;w=2}else l=Math.max(0,l-1)}}
+    lv[i]=l;why[i]=w}
+  return{lv,why,line}}
 function fcSnowLine(i,t){const F=D.fc,H=fcH(i,t);if(H<0||H>F.n-1)return null;let z=null;for(const fp of F.pts){const v=fp.h.sd[Math.round(H)];if(v>.03&&(z===null||fp.z<z))z=fp.z}return z===null?null:z-150}
 function fcState(i,t){const key=FCP[i]+'|'+R.day[i]+'|'+Math.round(t*60);let s=WXC.get(key);if(s)return s;const f=fcAt(i,t);
   if(!f){s={sunAmt:1,clar:.8,nofc:1,fl:flPlain(t),sl:flPlain(t)-300};WXC.set(key,s);return s}
@@ -272,7 +291,7 @@ function open(plan,blobs,cb){
   const fw=HP.forecastWindow(D.date);if(fw.ok&&navigator.onLine&&(!D.fc||!D.ens||Date.now()-D.fc.issued>3*3600e3||!D.fc.pts.some(p=>p.h.w8s&&p.h.w8s.length)))updateForecast(false);
   if(D.clim&&!D.clim.rough&&!D.clim.wd&&navigator.onLine&&HP.fetchClimWind)HP.fetchClimWind(D.clim,D.center.lat,D.center.lon,AC.signal).then(w=>{if(!w||!R||!D.clim)return;Object.assign(D.clim,w);WFC.clear();WXC.clear();LKC.clear();refreshTimes();save()}).catch(()=>{});
   if(navigator.onLine&&D.clim&&!D.clim.cls)refreshClimate();
-  runTrail(false);addEventListener('online',()=>runTrail(false),sig);
+  runTrail(false);fetchHuts();addEventListener('online',()=>{runTrail(false);fetchHuts()},sig);
 }
 async function refreshClimate(){const plan=D,z=plan.clim.z||[plan.terr.min,plan.terr.max];
   try{const c=await HP.fetchClimate(plan.center.lat,plan.center.lon,z[0],z[1]);if(plan!==D)return;D.clim=c;D.tz=D.tz||c.tz;LKC.clear();WXC.clear();renderWxChips();refreshTimes();save()}catch(e){console.warn('climate',e)}}
@@ -338,6 +357,26 @@ function updateReadout(){
 function placeName(i){const d=dayOf(i);let best=null,bd=1.2;for(const p of PTS){if(p.kind==='high')continue;if(R.day[p.i]!==d.n&&p.i!==d.i0-1)continue;const dd=Math.abs(R.d[p.i]-R.d[i]);if(dd<bd){bd=dd;best=p}}return best?best.name:`km ${(R.d[i]-R.d[d.i0]).toFixed(1)}`}
 function stormOnset(d){if(S.wx==='fc'){for(let i=d.i0;i<=d.i1;i+=4){const c=cond(i,CLK[i]);if(c.thd!=null&&c.thd<8000)return CLK[i]}return 99}
   let on=99;for(const c of CELLS){const t=c.t0+.75,q=cellAt(c,t);for(let i=d.i0;i<=d.i1;i+=15){if(Math.hypot(R.x[i]-q.x,R.y[i]-q.y)*MPP<12000){on=Math.min(on,t);break}}}return on}
+/* ---------- huts and refuges (since 2.3): phone, website, season and booking, from OpenStreetMap ---------- */
+const MON3=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// the season in an opening_hours tag: month ranges that are open, and those marked off or closed
+function seasonOf(oh){if(!oh)return null;if(/24\/7/.test(oh))return{all:true,open:[],shut:[]};const open=[],shut=[];
+  const re=/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s*(\d{1,2})(?!\d|:\d))?(?:\s*-\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(?:\s*(\d{1,2})(?!\d|:\d))?)?/g;
+  for(const rule of oh.split(/;|\|\|/)){const off=/\b(off|closed)\b/i.test(rule);let m;re.lastIndex=0;
+    // "Jun 20-Oct 10", "May-Oct", or one day ("Dec 25 off")
+    while((m=re.exec(rule))){const a=MON3.indexOf(m[1]),s0=a*100+(m[2]?+m[2]:1),e0=m[3]?MON3.indexOf(m[3])*100+(m[4]?+m[4]:31):m[2]?s0:a*100+31;(off?shut:open).push([s0,e0])}}
+  return open.length||shut.length?{open,shut}:null}
+function openOn(s,date){if(!s)return null;if(s.all)return true;const k=date.getMonth()*100+date.getDate(),inR=([a,b])=>a<=b?k>=a&&k<=b:k>=a||k<=b;
+  if(s.shut.some(inR))return false;return s.open.length?s.open.some(inR):true}
+const seasonText=s=>s&&s.open.length?s.open.map(([a,b])=>`${MON3[a/100|0]}${a%100>1?' '+a%100:''}–${MON3[b/100|0]}${b%100<28?' '+b%100:''}`).join(', '):'';
+const telOf=p=>String(p).replace(/[^\d+]/g,'');
+function hutLine(name){const h=(D.huts||{})[name];if(!h)return'';const s=seasonOf(h.open),bits=[];
+  if(h.phone)bits.push(`<a href="tel:${telOf(h.phone)}">${esc(h.phone)}</a>`);if(h.web)bits.push(`<a href="${esc(h.web)}" target="_blank" rel="noopener">website</a>`);
+  if(h.beds)bits.push(`${h.beds} beds`);if(seasonText(s))bits.push(`open ${seasonText(s)}`);if(/yes|required|recommended/.test(h.book||''))bits.push('book ahead');
+  return bits.join(' · ')}
+// the details of an older hike's huts, once, with a connection
+async function fetchHuts(){if(D.hutsAt||!navigator.onLine||!HP.hutInfo||!D.points.some(p=>/hut|camp|shelter/.test(p.kind)))return;const plan=D;
+  try{const h=await HP.hutInfo(plan,AC&&AC.signal);if(plan!==D)return;D.huts=h;D.hutsAt=Date.now();save();renderBrief()}catch(e){if(e&&e.name!=='AbortError')console.warn('huts',e)}}
 function dayBrief(d){
   const plain=S.wx==='plain';let cold=null,hot=null,gust=null,cloudKm=0,wetKm=0,snowKm=0,th=null,nofc=0;
   for(let i=d.i0;i<=d.i1;i++){const c=cond(i,CLK[i]),seg=i<d.i1?R.d[i+1]-R.d[i]:0;if(c.st.nofc)nofc++;
@@ -348,11 +387,15 @@ function dayBrief(d){
   // the hardest places on this day, and what today's weather does to them
   {const F=safety();for(const x of F.top.filter(x=>x.i0<=d.i1&&x.i1>=d.i0).slice(0,2)){let wet=0,snow=0,th=0;
     if(!plain)for(let i=Math.max(x.i0,d.i0);i<=Math.min(x.i1,d.i1);i++){const c=cond(i,CLK[i]);if(c.trail==='wet')wet=1;if(c.trail==='snow'||c.trail==='icy')snow=1;if(c.thd!=null&&c.thd<8000)th=1}
-    const i0=Math.max(x.i0,d.i0),n=nearName(i0),at=`${x.what} at km ${kmIn(i0).toFixed(1)}${n?`, ${esc(n)}`:''}`,steep=/sac|drop|edge|aid|vf|glacier/.test(x.k);
+    const i0=x.nm!=null&&x.nm>=d.i0&&x.nm<=d.i1?x.nm:Math.max(x.i0,d.i0),n=nearName(i0),at=`${x.what} at km ${kmIn(i0).toFixed(1)}${n?`, ${esc(n)}`:''}`,steep=/sac|drop|edge|aid|vf|glacier/.test(x.k);
     if(steep&&snow)hz('bad',`${at}: snow or ice there today. Wait, or take another way.`);
     else if(steep&&th&&/sac|edge|aid|vf/.test(x.k))hz('bad',`${at}: storms nearby. Don't be there when they come.`);
     else if(steep&&wet)hz('bad',`${at}: wet and slippery today. Wait for it to dry, or take another way.`);
     else hz(x.lvl,`${at}${x.tip?`: ${x.tip}`:''}.`)}}
+  // tonight's hut: closed on that date by its season, or worth booking (since 2.3)
+  if(d.n<DAYS.length){const h=(D.huts||{})[d.to],s=h&&seasonOf(h.open),o=openOn(s,hikeDate(d.n)),tel=h&&h.phone?` <a href="tel:${telOf(h.phone)}">${esc(h.phone)}</a>`:'';
+    if(o===false)hz('bad',`${esc(d.to)} is usually closed on ${fmtDate(isoDay(hikeDate(d.n)))} (open ${seasonText(s)||'in season only'}). Call to check${tel?':'+tel:''}, or plan another night.`);
+    else if(h&&(h.phone||h.web))hz('info',`Book ${esc(d.to)} ahead${tel?':'+tel:''}${h.web&&!tel?` (<a href="${esc(h.web)}" target="_blank" rel="noopener">website</a>)`:''}.`)}
   const n0=L.length;
   if(S.wx==='fc'&&nofc>(d.i1-d.i0)/2)hz('info',`No forecast for ${fmtDate(isoDay(dayDate(d.n)))} yet: an average day.`);
   if(!plain){
@@ -375,8 +418,12 @@ function dayBrief(d){
   return `<div class="bday" style="--c:${d.color}"><h3 class="micro"><i></i>Day ${d.n} · ${esc(d.from)} → ${esc(d.to)}</h3><ul class="alerts">${L.join('')}</ul><dl class="kit"><dt class="micro">Wear</dt><dd>${K.wear}</dd>${K.carry.length?`<dt class="micro">Carry</dt><dd>${K.carry.join(', ')}</dd>`:''}</dl></div>`}
 const pbar=(pc,lbl)=>{const ks=HP.WXK.filter(k=>pc[k]>0).sort((a,b)=>pc[b]-pc[a]);return`<div class="pbar" role="img" aria-label="${esc(lbl+': '+ks.map(k=>HP.WXT[k].name+' '+pc[k]+'%').join(', '))}">${ks.map(k=>`<i style="--c:${HP.WXT[k].c};flex:${pc[k]} 1 0"></i>`).join('')}</div>`};
 const hikeDate=n=>{const d=parseDay(D.date);d.setDate(d.getDate()+n-1);return d};
+// three weeks before the hike, a reminder to save the map for no signal (since 2.3)
+function stripNudge(){if(D.strip||!D.id)return'';const t0=new Date(),d0=HP.u.parseDay(D.date),dd=(d0-new Date(t0.getFullYear(),t0.getMonth(),t0.getDate()))/864e5;
+  if(dd>21||dd<-(DAYS.length))return'';const run=HP.stripRun&&HP.stripRun.id===D.id;
+  return`<p class="al info nudge">${run?`Saving the map for no signal… ${Math.round((HP.stripRun.f||0)*100)}%`:'Before you go: save the map for when there is no signal on the trail.'}${run?'':' <button type="button" class="lnk" data-act="strip">Save it now</button>'}</p>`}
 function renderBrief(){if(!R)return;const sc=SCN[S.wx];
-  $('#brief').innerHTML=`<div class="ch"><h2 class="micro">${S.wx==='plain'?'Plain map':S.wx==='fc'?'Forecast':esc(sc.name)}</h2><span class="micro">${S.wx==='fc'||S.wx==='plain'?'':MONN[S.mon]}</span></div>${(S.day?[DAYS[S.day-1]]:DAYS).map(dayBrief).join('')}`}
+  $('#brief').innerHTML=stripNudge()+`<div class="ch"><h2 class="micro">${S.wx==='plain'?'Plain map':S.wx==='fc'?'Forecast':esc(sc.name)}</h2><span class="micro">${S.wx==='fc'||S.wx==='plain'?'':MONN[S.mon]}</span></div>${(S.day?[DAYS[S.day-1]]:DAYS).map(dayBrief).join('')}`}
 /* ---------- the cards: weather by day, daylight, steepness ---------- */
 const deg=v=>`${Math.round(v)}°`.replace('-','−');
 function tempRange(d){let lo=1e9,hi=-1e9;for(let i=d.i0;i<=d.i1;i+=3){const T=cond(i,CLK[i]).T;lo=Math.min(lo,T);hi=Math.max(hi,T)}return`${deg(hi)} / ${deg(lo)}`}
@@ -421,6 +468,8 @@ function packList(){const days=DAYS.map(dayFacts),any=k=>days.some(x=>x[k]),minF
   if(maxT>=12||plain)add('shirt','');if(minF<12||plain)add('base','');add('fleece','for stops and the top');
   if(minF<5)add('hat',`feels ${tt(minF)} at the coldest`),add('gloves','');if(minF<0)add('puffy','for the cold and for stops');
   if(any('wetD')||S.wx==='storm'||any('th'))add('rainpants','rain on the way');if(any('wetD'))add('liner','keeps spare clothes dry');if(any('snowD'))add('gaiters','snow on the path');if(any('icy'))add('spikes','ice on the path');
+  // old snow left from the winter (the safety check): gaiters and poles, and microspikes for steep snow
+  {const os=safety().items.filter(x=>x.k==='snow'&&x.lvl!=='info');if(os.length){add('gaiters','old snow on the path');add('poles','old snow on the path');if(os.some(x=>x.lvl==='bad'))add('spikes','steep old snow')}}
   if(any('steep')||any('wetD')||any('snowD'))add('poles','steep or slippery ground');if(maxT>22||plain)add('sunhat',''),add('sunglasses','');else add('sunglasses','');
   add('firstaid','');add('nav','');add('power','');if(any('late')||DAYS.length>1)add('headlamp',any('late')?'you walk near dark':'');
   if(DAYS.length>1){const ks=DAYS.slice(0,-1).map(d=>{const p=PTS.find(q=>Math.abs(q.i-d.i1)<=3&&q.kind!=='high');return p?p.kind:'wild'});
@@ -556,6 +605,7 @@ function detail(kind){if(!R)return null;const ds=daysOf(),sub=S.day?`Day ${S.day
     return{title:kind==='effort'?'Effort':'Days',html:dHero(Math.round(hard.e),word,`Effort of the hardest day, day ${hard.d.n}`,'var(--eff)')+
       dSec('Effort by day',`${rows.map(r=>`<div class="ebar"><span class="dn" style="--c:${r.d.color}"><i></i>${r.d.n}</span><span class="eb"><i style="width:${Math.min(100,r.e/45*100).toFixed(1)}%;--c:${r.e>=35?'var(--bad)':r.e>=25?'var(--fair)':r.e>=15?'var(--eff)':'var(--good)'}"></i></span><b>${Math.round(r.e)}</b></div>`).join('')}${scale}`,'km-effort')+
       rows.map(r=>dSec(`Day ${r.d.n} · ${esc(r.d.from)} → ${esc(r.d.to)}`,dKpis([[r.km.toFixed(1),'km'],[nf.format(Math.round(r.up)),'m up'],[fmtH(r.h),'walking'],[`${r.water} l`,'water']])+
+        (r.d.n<DAYS.length&&hutLine(r.d.to)?`<p class="small dhut">Night: <b>${esc(r.d.to)}</b> · ${hutLine(r.d.to)}</p>`:'')+
         `<p class="small mute dmeta">${fmtDate(isoDay(hikeDate(r.d.n)))} · ${fmtClock(CLK[r.d.i0])} → ${fmtClock(CLK[r.d.i1])}${S.breaks?' with rests':''} · ${nf.format(Math.round(r.dn))} m down · top ${nf.format(Math.round(r.top))} m · ${r.wq?`${r.wq} water point${r.wq>1?'s':''}`:'no water on the way'}${r.stops.length?` · passes ${r.stops.slice(0,4).map(esc).join(', ')}`:''}</p>`)).join('')+
       dMeans(M)+`<p class="dsrc">Effort is km-effort: each kilometre and each 100 m of climbing count 1. Times use the DIN 33466 hiking formula at your pace.</p>`}}
   return null}
@@ -612,7 +662,8 @@ function viewsDetail(){const V=bestViews();if(!V.length)return null;const M=[],s
 // What the route is like for a beginner, from the paths mapped in OpenStreetMap (D.trail, see js/trail.js), the terrain
 // heights beside the path, and the huts, villages and roads along it. Each finding says what, where, why it matters and what to do.
 let SAFE=null,SAFEK='',TRAILRUN=null;
-const trailOK=()=>{const T=D&&D.trail;return!!(T&&T.v===HP.TRAIL_V&&T.n===N&&T.paths)};
+// an older check still serves (offline above all); a newer version of the check runs again with a connection
+const trailOK=()=>{const T=D&&D.trail;return!!(T&&T.v>=1&&T.v<=HP.TRAIL_V&&T.n===N&&T.paths)};
 const pathAt=i=>{const T=D.trail;if(!trailOK())return null;const k=T.pw[i];return k>=0?T.paths[k]:null};
 const TURN={S:'Straight on',SL:'Bear left',SR:'Bear right',L:'Turn left',R:'Turn right',HL:'Turn sharp left',HR:'Turn sharp right',KL:'Keep left',KR:'Keep right'};
 // emergency numbers, checked November 2026: 112 works across Europe on any network that reaches your phone
@@ -634,9 +685,9 @@ const kmIn=i=>R.d[i]-R.d[dayOf(i).i0];
 const mlen=(a,b)=>{const v=(R.d[b]-R.d[a])*1000;return v>=1000?`${(v/1000).toFixed(1)} km`:`${Math.max(20,Math.round(v/10)*10)} m`};
 const aboutH=t=>t<1?`${Math.max(10,Math.round(t*6)*10)} min`:fmtH(Math.round(t*6)/6).replace(' 00','');
 // where a finding is: day, km (from the start of that day) and the nearest place
-function whereOf(x,day=DAYS.length>1){const a=x.i0,b=x.i1,one=b-a<3||R.day[b]!==R.day[a],n=nearName(a);
+function whereOf(x,day=DAYS.length>1){const a=x.i0,b=x.i1,one=b-a<3||R.day[b]!==R.day[a],n=nearName(x.nm??a);
   return`${day?`Day ${R.day[a]} · `:''}km ${kmIn(a).toFixed(1)}${one?'':`–${kmIn(b).toFixed(1)}`}${n?` · ${esc(n)}`:''}`}
-function safety(){const key=[N,DAYS.length,DAYS.map(d=>d.i1).join(','),!!HGT,D.trail&&D.trail.at,S.pace,S.breaks,S.start,TRAILRUN?1:0].join('|');if(SAFE&&SAFEK===key)return SAFE;
+function safety(){const key=[N,DAYS.length,DAYS.map(d=>d.i1).join(','),!!HGT,D.trail&&D.trail.at,S.pace,S.breaks,S.start,TRAILRUN?1:0,D.date,D.fc?D.fc.issued:0].join('|');if(SAFE&&SAFEK===key)return SAFE;
   const T=trailOK()?D.trail:null,cc=T?T.cc||[]:[],ch=cc.length>0&&cc.every(c=>c==='ch'||c==='li'),it=[],len=(a,b)=>R.d[b]-R.d[a];
   const add=(lvl,k,i0,i1,what,why,todo,tip,o={})=>{const x={lvl,k,i0,i1,what,why,todo,tip,...o};it.push(x);return x};
   const runs=(f,minKm=0,gapKm=.06)=>{const out=[];let s=-1;for(let i=0;i<=N;i++){const on=i<N&&f(i);if(on&&s<0)s=i;if(!on&&s>=0){const l=out[out.length-1];if(l&&R.d[s]-R.d[l.i1]<gapKm)l.i1=i-1;else out.push({i0:s,i1:i-1});s=-1}}return out.filter(r=>len(r.i0,r.i1)>=minKm)};
@@ -645,6 +696,12 @@ function safety(){const key=[N,DAYS.length,DAYS.map(d=>d.i1).join(','),!!HGT,D.t
   if(T)for(let i=0;i<N;i++){const p=pathAt(i);if(!p)continue;mapped++;if(p.mk||p.sym>=0)marked++;let g=p.sac;
     if(ch&&p.sym>=0){const s=T.syms[p.sym];if(/^yellow:/.test(s)&&/diamond/.test(s))g=g||1;else if(/^red:white:red_bar/.test(s))g=Math.max(g,2);else if(/^blue:white:blue_bar/.test(s)){if(g<4)wbw[i]=1;g=Math.max(g,4)}}
     if(!g&&ROADY.test(p.hw))g=1;G[i]=g;if(g>hard)hard=g}
+  // the official Swiss hiking trails (swisstopo, since 2.3): an official alpine trail is white-blue-white whatever the map's tags say,
+  // when the route keeps to it for at least 150 m
+  // (only the part in Switzerland counts: a route that crosses the border has other countries' signs there)
+  const OF=T&&T.ofc&&T.ofc.length===N?T.ofc:null,inS=OF?Uint8Array.from({length:N},(_,i)=>HP.maps.inCH(R.lat[i],R.lon[i])?1:0):null;let official=null;
+  if(OF){let on=0,nS=0;for(let i=0;i<N;i++)if(inS[i]){nS++;if(OF[i])on++}official=nS>N*.2?on/nS:null;
+    for(const r of runs(i=>OF[i]===2,.15,.05))for(let i=r.i0;i<=r.i1;i++){if(G[i]<4)wbw[i]=1;G[i]=Math.max(G[i],4);if(G[i]>hard)hard=G[i]}}
   // steep ground below the path, where the map does not already say the path is easy (T1, yellow signs, tracks and roads)
   const EX=exposure(),exp=i=>EX&&EX[i]>=42&&G[i]!==1;
   if(T){for(const r of runs(i=>G[i]>=4,0,.15)){let g=0,wb=0;for(let i=r.i0;i<=r.i1;i++){g=Math.max(g,G[i]);wb|=wbw[i]}
@@ -668,8 +725,29 @@ function safety(){const key=[N,DAYS.length,DAYS.map(d=>d.i1).join(','),!!HGT,D.t
     for(const r of runs(i=>{const p=pathAt(i);return!!p&&!p.mk&&p.sym<0&&G[i]!==1},1.5,.2))add('info','unmk',r.i0,r.i1,'No waymarks',`${mlen(r.i0,r.i1)} with no marked route on the map.`,'Navigate with the guide on your phone.','')}
   for(const r of runs(exp,.05,.1)){let mx=0;for(let i=r.i0;i<=r.i1;i++)mx=Math.max(mx,EX[i]);
     add('warn','drop',r.i0,r.i1,mx>=55?'Very steep drop beside the path':'Steep drop beside the path',`${mlen(r.i0,r.i1)} where the ground falls away steeply below the path: a slip would not stop quickly.`,'Watch every step; not in rain, snow or fog.','watch your step',{mx})}
+  // paths that are not part of the signed Swiss hiking network: no yellow signposts or marks to expect there (roads aside)
+  if(OF&&official>.3)for(const r of runs(i=>inS[i]&&!OF[i]&&!(pathAt(i)&&ROADY.test(pathAt(i).hw)&&G[i]===1),.4,.1))
+    add('info','unoff',r.i0,r.i1,'Not on the official hiking trails',`${mlen(r.i0,r.i1)} that is not part of Switzerland’s signed hiking network (swisstopo).`,'Expect no yellow signposts or marks here: follow the live guide on your phone, and turn back if the path fades.','');
   // the path itself very steep (over 20° along about 200 m): a note, as slips happen most on the way down
   for(const r of runs(i=>SLOPE[i]>=22,.15,.06))add('info','steep',r.i0,r.i1,'Very steep path',`${mlen(r.i0,r.i1)} at over 20°, going ${R.e[r.i1]>R.e[r.i0]?'up':'down'}.`,'Poles and short steps, above all on the way down; slippery when wet.','');
+  // old snow on the path (since 2.3): take care where it is likely; not for beginners only where the forecast models show snow lying
+  // on steep or demanding ground (the typical snow for a date varies too much from year to year to say more)
+  const SN=snowAt(),steepAt=i=>SLOPE[i]>=22||G[i]>=3||(EX&&EX[i]>=35);
+  // one finding a day, so each says where it is; in winter (from late November to February) it is the season's snow, not the last one's
+  for(const r0 of runs(i=>SN.lv[i]>0,.1,.3))for(const dy of DAYS){const r={i0:Math.max(r0.i0,dy.i0),i1:Math.min(r0.i1,dy.i1)};if(r.i1<=r.i0||R.d[r.i1]-R.d[r.i0]<.1)continue;
+    let mx=0,hi=r.i0,st=false,fc=false,north=false;for(let i=r.i0;i<=r.i1;i++){if(SN.lv[i]>mx)mx=SN.lv[i];if(R.e[i]>R.e[hi])hi=i;if(SN.lv[i]===2&&steepAt(i))st=true;if(SN.why[i]===2)fc=true;if(facing(i)==='n')north=true}
+    const d=hikeDate(dy.n),doy=doyOf(d),sd=D.center.lat<0?(doy+183)%366:doy,win=sd>320||sd<60,when=d.getDate()<11?'early':d.getDate()<21?'mid':'late',mon=MONN[d.getMonth()+1];
+    const top=nf.format(Math.round(R.e[hi])),line=nf.format(Math.round(oldSnowLine(doy,D.center.lat)/50)*50);
+    const why=fc?`The weather models show snow lying on the ground ${mx===2?'at this height':'just above this height'} near your date; this stretch reaches ${top} m.`
+      :win?`In ${when} ${mon} snow usually lies above about ${line} m${north?', longest on slopes facing north like this one':''}; this stretch reaches ${top} m.`
+      :`In ${when} ${mon} the winter’s snow usually still lies above about ${line} m${north?', and longer on slopes facing north like this one':''}; this stretch reaches ${top} m.`;
+    if(mx===2)add(st&&fc?'bad':'warn','snow',r.i0,r.i1,`${win?'Snow':'Old snow'} likely ${st?'on steep ground':'on the path'}`,why+(st?' Hard snow on a slope is where beginners slip most.':''),
+      win?(st?'Winter conditions: on steep snow you need crampons and to know how to use them. Ask the tourist office, go with someone experienced, or choose a walk lower down.'
+          :'Winter conditions: the path and its marks may be under snow. Ask the tourist office about it, take poles, and turn back if the way gets hard to find.')
+        :st?'Ask the hut or the local tourist office about the snow a few days before. On steep snow you need microspikes and to know how to use them; otherwise wait for later in the season, or choose a lower route.'
+        :'Ask the hut about conditions a few days before. Take poles; cross snow patches carefully, and go round them where you can.','ask about the snow',{fc,nm:hi});
+    else add('info','snow',r.i0,r.i1,win?'Snow possible':'Snow patches possible',why,win?'Early winter snow can cover the path at this height: ask about the conditions before you go, and take poles.'
+      :'Snow left in gullies and on north-facing slopes is hard and slippery in the morning: go round it, or cross it slowly with poles.','',{fc,nm:hi})}
   // one finding per place: edges and drops inside a demanding or alpine stretch become part of it, edges inside a drop too
   const inside=(x,y)=>x.i0>=y.i0-3&&x.i1<=y.i1+3;
   for(const y of it.filter(y=>y.k==='sac'||y.k==='drop'))for(const x of it)if(x!==y&&!x.gone&&(x.k==='edge'||x.k==='foot'||x.k==='steep'||(x.k==='drop'&&y.k==='sac'))&&inside(x,y)){x.gone=true;if(x.k==='edge'||x.k==='drop')y.edge=1}
@@ -689,7 +767,7 @@ function safety(){const key=[N,DAYS.length,DAYS.map(d=>d.i1).join(','),!!HGT,D.t
   const junc=T?T.junc.filter(j=>j.key&&!j.town):[];
   // a level for each point, for the line colours and the strip
   const lv=new Uint8Array(N);for(const x of it)if(x.lvl!=='info')for(let i=x.i0;i<=x.i1;i++)lv[i]=Math.max(lv[i],x.lvl==='bad'?2:1);
-  SAFE={T,lvl,lv,items:it,top,marks,junc,hard,mapped:N?mapped/N:0,marked:mapped?marked/mapped:0,EX,cc,ch,far};SAFEK=key;return SAFE}
+  SAFE={T,lvl,lv,items:it,top,marks,junc,hard,mapped:N?mapped/N:0,marked:mapped?marked/mapped:0,official,EX,cc,ch,far};SAFEK=key;return SAFE}
 const EASYK=/^(sac|vf|glacier|closed|aid|drop|edge|off|vis|hazard)$/,canEase=F=>F.items.some(x=>x.lvl!=='info'&&EASYK.test(x.k));
 const VERD={ok:['Suits a beginner','var(--good)'],warn:['Take care in places','var(--fair)'],bad:['Not for beginners','var(--bad)'],wait:['Not checked yet','var(--mute)']};
 const LVC=['color-mix(in srgb,var(--good) 55%,transparent)','var(--fair)','var(--bad)'];
@@ -699,11 +777,13 @@ function safeStrip(F){const tot=R.d[N-1]||1;let h='',s=0;for(let i=1;i<=N;i++)if
   return`<div class="sstrip" aria-hidden="true">${h}${DAYS.slice(0,-1).map(d=>`<b style="left:${(R.d[d.i1]/tot*100).toFixed(2)}%"></b>`).join('')}</div>`}
 function renderSafety(){const el=$('#safecard');if(!el||!R)return;const F=safety(),T=F.T,cc=F.cc;
   const head=`<div class="ch"><h2 class="micro">Safety</h2><span class="micro">${T?'trail check':'terrain only'}</span></div>`;
-  if(!T&&!F.EX){el.innerHTML=head+(TRAILRUN?'<div class="skel sk1"></div><div class="sstrip skel"></div><div class="skel sk2"></div><div class="skel sk3"></div>':'')+`<p class="small mute">${TRAILRUN?'Checking the paths on the map…':D.trailErr&&navigator.onLine?'The trail data could not be loaded. It tries again next time you open the hike.':'Connect to the internet once to check the trail; the result stays with the hike for offline use.'}</p>`;return}
+  if(!T&&!F.EX){el.innerHTML=head+(TRAILRUN?'<div class="skel sk1"></div><div class="sstrip skel"></div><div class="skel sk2"></div><div class="skel sk3"></div>':'')+`<p class="small mute">${TRAILRUN?'Checking the paths on the map…':D.trailErr&&navigator.onLine?'The trail data could not be loaded just now. <button type="button" class="lnk" data-act="trailretry">Try again</button>':'Connect to the internet once to check the trail; the result stays with the hike for offline use.'}</p>`;return}
   const[vt,vc]=VERD[F.lvl],top=F.top.slice(0,3),syms=[...new Set(F.marks.map(m=>m.sym))].slice(0,3);
   el.innerHTML=head+`<div class="verd" style="--c:${vc}"><i></i><b>${vt}</b>${TRAILRUN?'<span class="small mute">checking…</span>':''}</div>`+safeStrip(F)+
     (T?`<ul class="kpis sk"><li><b>${F.hard?'T'+F.hard:'–'}</b><span>hardest</span></li><li><b>${Math.round(F.marked*100)}%</b><span>marked</span></li><li><b>${F.junc.length}</b><span>junctions</span></li></ul>`:'')+
-    (top.length?`<ul class="alerts sfa">${top.map(x=>`<li class="al ${x.lvl}">${x.what}<small>${whereOf(x)}</small></li>`).join('')}</ul>`:`<p class="small mute">${T?'No hard or exposed places found on the map.':'The paths are not checked yet.'}</p>`)+
+    (top.length?`<ul class="alerts sfa">${top.map(x=>`<li class="al ${x.lvl}">${x.what}<small>${whereOf(x)}</small></li>`).join('')}</ul>`:T?'<p class="small mute">No hard or exposed places found on the map.</p>':'')+
+    // terrain findings without the trail check: say why, and offer to try again
+    (!T&&!TRAILRUN?`<p class="small mute">${D.trailErr&&navigator.onLine?'The paths could not be checked just now. <button type="button" class="lnk" data-act="trailretry">Try again</button>':'The paths are not checked yet: that happens the next time this hike opens with a connection.'}</p>`:'')+
     (syms.length?`<div class="wmrow"><span class="micro">Follow</span><div>${syms.map(s=>wmChip(s,cc)).join('')}</div></div>`:'')+
     (F.lvl==='bad'&&canEase(F)?`<button class="btn small easybtn" data-act="easier">Find an easier way</button>`:'')+
     `<div class="wmrow sos"><span class="micro">Emergency</span><div>${sosList(cc).slice(0,2).map(([n,w])=>`<a class="sosn" href="tel:${n.replace(/\s/g,'')}">${n}</a><span class="small mute">${esc(w.split(',')[0])}</span>`).join('')}</div></div>`}
@@ -732,7 +812,8 @@ function safetyDetail(){const F=safety(),T=F.T,cc=F.cc,[vt,vc]=VERD[F.lvl],multi
   if(F.junc.length)M.push(['info',`${F.junc.length} junctions where you must choose a way. The live guide tells you at each one, and warns you when you leave the route.`]);
   M.push(['info','Maps can be wrong or out of date, and paths change with the weather and the season. Follow the signs on the ground, ask at huts, and turn back when unsure.']);
   return{title:'Safety',html:dHero(vt,'',T?`trail check · ${new Date(T.at).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'})}`:'terrain only: the paths are not checked yet',vc).replace('class="dhero"','class="dhero txt"')+
-    (T?dKpis([[F.hard?'T'+F.hard:'–','hardest'],[`${Math.round(F.mapped*100)}%`,'mapped'],[`${Math.round(F.marked*100)}%`,'marked'],[String(F.junc.length),'junctions']]):'')+
+    (T?dKpis([[F.hard?'T'+F.hard:'–','hardest'],F.official!=null?[`${Math.round(F.official*100)}%`,'official']:[`${Math.round(F.mapped*100)}%`,'mapped'],[`${Math.round(F.marked*100)}%`,'marked'],[String(F.junc.length),'junctions']]):'')+
+    (F.official!=null?`<p class="small mute dmeta">${Math.round(F.official*100)}% of the route is on Switzerland’s official hiking trails (swisstopo), the signed network with yellow signposts.</p>`:'')+
     dSec('Along the route',`<div class="dfig">${prof}</div>`+leg)+
     dSec('Places to take care',byDay||alongH?byDay+alongH:'<p class="small mute">None found on the map or in the terrain.</p>',F.items.length?String(F.items.length):'')+
     (marks?dSec('Waymarks to follow',`<ul class="dlist wml">${marks}</ul>`):'')+
@@ -742,7 +823,7 @@ function safetyDetail(){const F=safety(),T=F.T,cc=F.cc,[vt,vc]=VERD[F.lvl],multi
     `<div class="dbtns"><button class="btn wide primary" data-dact="guide">Open the live guide</button>${canEase(F)?'<button class="btn wide" data-dact="easier">Find an easier way</button>':''}<button class="btn wide ghost" data-dact="recheck">Check the trail again</button></div>`+
     `<p class="dsrc">Paths, grades (SAC scale T1–T6), waymarks, junctions, cliffs, glaciers and stream crossings from OpenStreetMap${T?`, checked ${new Date(T.at).toLocaleDateString('en-GB')}`:''}. Steep drops from the terrain heights (about 25 m detail, so a narrow ledge may not show).${F.ch?' Closures from the Swiss hiking trails (Federal Roads Office, swisstopo).':''}</p>`}}
 // fetch the trail check when there is none yet (or it is out of date), then keep it with the hike
-async function runTrail(force){if(TRAILRUN||!R||!navigator.onLine||!HP.trailCheck)return;if(!force&&trailOK()&&Date.now()-D.trail.at<60*864e5)return;const plan=D;
+async function runTrail(force){if(TRAILRUN||!R||!navigator.onLine||!HP.trailCheck)return;if(!force&&trailOK()&&D.trail.v===HP.TRAIL_V&&Date.now()-D.trail.at<60*864e5)return;const plan=D;
   TRAILRUN=true;SAFEK='';renderSafety();
   try{const T=await HP.trailCheck(plan,AC&&AC.signal);if(plan!==D)return;D.trail=T;delete D.trailErr;
     // the path grades fill in the difficulty for routes that came as a file
@@ -754,7 +835,7 @@ async function runTrail(force){if(TRAILRUN||!R||!navigator.onLine||!HP.trailChec
 /* ---------- ArcGIS World Imagery ---------- */
 // Esri asks for its data sources to be named exactly as the service gives them; ask once a visit, keep the last answer.
 function esriCredit(){esriMeta=true;try{const c=localStorage.getItem('hp-esri-src');if(c)$('#attrib-esri-src').textContent=c}catch(e){}
-  fetch(`${ESRI_URL}?f=json&token=${ESRI_KEY}`).then(r=>r.json()).then(j=>{const c=j&&typeof j.copyrightText==='string'&&j.copyrightText.replace(/^Source:\s*/i,'').trim();if(c&&c.length<400){$('#attrib-esri-src').textContent=c;try{localStorage.setItem('hp-esri-src',c)}catch(e){}}}).catch(()=>{})}
+  HP.fetchT(`${ESRI_URL}?f=json&token=${ESRI_KEY}`,{},10000,'json').then(x=>x.body).then(j=>{const c=j&&typeof j.copyrightText==='string'&&j.copyrightText.replace(/^Source:\s*/i,'').trim();if(c&&c.length<400){$('#attrib-esri-src').textContent=c;try{localStorage.setItem('hp-esri-src',c)}catch(e){}}}).catch(()=>{})}
 function esriFailed(){if(HP.maps.esriOff)return;if(HP.maps.esriFail())HP.toast('The ArcGIS maps are not available right now, so the 3D view uses the usual ones.')}
 
 /* ---------- profile ---------- */
@@ -980,6 +1061,7 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
         t.mesh=new THREE.Mesh(g,m);t.mesh.castShadow=t.mesh.receiveShadow=true;t.mesh.visible=false;t.src='';tg.add(t.mesh)}t.stale=false;dirty=true};
     const fr=new THREE.Frustum(),pm=new THREE.Matrix4(),inv=new THREE.Matrix4(),bx=new THREE.Box3(),cc=new THREE.Vector3(),lastM=new THREE.Matrix4();let Kpx=1000,lastH=0;
     const SPLIT=coarse?440:400,MERGE=coarse?330:300,GSPL=coarse?8:7,GMRG=coarse?5.5:5;
+    let backAt=-1;addEventListener('online',()=>{backAt=performance.now();dirty=true},sig);
     const want=t=>{t.vis=true;if(t.z>=18)return t.split=false;const geo=t.z<ZG(),pc=own({z:t.z+1,lat:t.lat,lon:t.lon,ch:t.ch}),img=!!pc,kk=pc&&pc.big?1.5:1;if(!geo&&!img)return t.split=false;
       bx.min.set(wx(t.r.x0),t.h0*S.ex,wz(t.r.y0));bx.max.set(wx(t.r.x1),t.h1*S.ex,wz(t.r.y1));t.vis=fr.intersectsBox(bx);if(!t.vis)return t.split=false;
       bx.getCenter(cc);const rad=bx.min.distanceTo(bx.max)/2,d=Math.max(camera.position.distanceTo(cc)-rad,rad*.25,1),edge=(t.r.x1-t.r.x0)*M/d*Kpx;
@@ -992,13 +1074,16 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
       const key=(src?src.k:GTEX?'g':'w')+(coverPass?'c':'');if(key===t.src)return src;t.src=key;const v=t.mr.value,m=t.mesh.material;
       if(src){v.set((t.r.x0-src.ax)/src.s,1-(t.r.y1-src.ay)/src.s,(t.r.x1-t.r.x0)/src.s,(t.r.y1-t.r.y0)/src.s);m.map=src.tex}
       else{v.set(t.r.x0/W,1-t.r.y1/H,(t.r.x1-t.r.x0)/W,(t.r.y1-t.r.y0)/H);m.map=GTEX||white}return src};
-    const pump=()=>{while(active<6&&loads.length){const{t,p}=loads.shift();if(t.used<sel-2||!t.mesh||!all.has(t.k)){t.ts=0;continue}active++;const style=S.map;
+    const pump=()=>{while(active<6&&loads.length){let{t,p}=loads.shift();if(t.used<sel-2||!t.mesh||!all.has(t.k)){t.ts=0;continue}
+      // ArcGIS switched off while this tile waited: it goes to the next map at once, rather than asking Esri again
+      if(p.esri&&HP.maps.esriOff){p=own(t);if(!p){t.ts=0;dirty=true;continue}}
+      active++;const style=S.map;
       if(p.esri&&!p.cr&&!esriMeta)esriCredit();
-      const one=u=>fetch(u,{mode:'cors'}).then(r=>{if(p.esri&&r.status!==404&&(!r.ok||!/^image\//.test(r.headers.get('content-type')||''))){esriFailed();throw Error('ArcGIS '+r.status)}if(!r.ok)throw Error('HTTP '+r.status);if(p.esri)HP.maps.esriOk();return r.blob()})
+      const one=u=>HP.fetchT(u,{mode:'cors'},15000,'blob').then(x=>{if(p.esri&&x.status!==404&&(!x.ok||!/^image\//.test(x.type))){esriFailed();throw Error('ArcGIS '+x.status)}if(!x.ok)throw Error('HTTP '+x.status);if(p.esri)HP.maps.esriOk();return x.body})
         .then(b=>new Promise((ok,no)=>{const im=new Image(),u=URL.createObjectURL(b);im.onload=()=>{URL.revokeObjectURL(u);ok(im)};im.onerror=()=>{URL.revokeObjectURL(u);no(Error('picture'))};im.src=u}));
       (p.sub?Promise.all([0,1,2,3].map(k=>one(p.url(t.z+1,t.x*2+(k&1),t.y*2+(k>>1))))).then(ims=>{const c=document.createElement('canvas');c.width=c.height=512;const g=c.getContext('2d');ims.forEach((im,k)=>g.drawImage(im,(k&1)*256,(k>>1)*256,256,256));return c}):one(p.url(t.z,t.x,t.y)))
         .then(im=>{if(!alive||S.map!==style||!all.has(t.k)){t.ts=0;return}const tx=new THREE.Texture(im);tx.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());tx.needsUpdate=true;t.tex=tx;t.ts=2;t.swiss=!!p.swiss;t.esri=!!p.esri&&!p.cr;t.ek=!!p.esri;t.cr=p.cr||'';dirty=true})
-        .catch(()=>{if(!alive||S.map!==style){t.ts=0;return}const pf=t.pf||(t.pf={});pf[p.k]=(pf[p.k]||0)+1;
+        .catch(e=>{if(!alive||S.map!==style){t.ts=0;return}const pf=t.pf||(t.pf={});pf[p.k]=(pf[p.k]||0)+1;t.pfAt=performance.now();if(/HTTP 404/.test(e&&e.message))t.gone=true;
           // the next map to try at once; the same map once more after a short pause, so a moment without signal doesn't use up its tries
           const np=own(t);if(np===p){t.ts=4;setTimeout(()=>{if(t.ts===4){t.ts=0;dirty=true}},2500)}else t.ts=np?0:3;dirty=true}).finally(()=>{active--;pump()})}};
     const drop=t=>{if(t.mesh){tg.remove(t.mesh);t.mesh.geometry.dispose();t.mesh.material.dispose();t.mesh=null}if(t.tex){t.tex.dispose();t.tex=null}all.delete(t.k)};
@@ -1020,14 +1105,15 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
       const out=[];roots.forEach(r=>visit(r,out));drawn=out;
       const key=out.map(t=>t.k).join(',');
       if(key!==drawnKey){drawnKey=key;const on=new Set(out);for(const t of all.values())if(t.mesh)t.mesh.visible=on.has(t);shadowDue=true}
-      let sw=false,es=false;const tc=new Set();for(const t of out){const src=setSrc(t);if(src&&t.vis!==false){if(src.swiss)sw=true;if(src.esri)es=true;if(src.cr)tc.add(src.cr)}else if(t.vis!==false)tc.add(D.topoSrc==='swisstopo'?'swiss':'otm');const p=!coverPass&&t.vis!==false&&own(t);if(p&&!t.ts){t.ts=1;loads.push({t,p})}}
+      let sw=false,es=false;const tc=new Set();for(const t of out){if(t.ts===3&&!t.gone&&(now-t.pfAt>30000||backAt>t.pfAt)){t.ts=0;t.pf=null}const src=setSrc(t);if(src&&t.vis!==false){if(src.swiss)sw=true;if(src.esri)es=true;if(src.cr)tc.add(src.cr)}else if(t.vis!==false)tc.add(D.topoSrc==='swisstopo'?'swiss':'otm');const p=!coverPass&&t.vis!==false&&own(t);if(p&&!t.ts){t.ts=1;loads.push({t,p})}}
       const tk=[...tc].sort().join(',');if(sw!==swissOn||es!==esriOn||tk!==topoOn){swissOn=sw;esriOn=es;topoOn=tk;credit()}
       pump();evict()}
     roots.forEach(make);
     return{update,swiss:()=>swissOn,esri:()=>esriOn,topo:()=>topoOn,cover(on){coverPass=on;dirty=true},
-      restyle(){for(const t of all.values()){if(t.tex){t.tex.dispose();t.tex=null}t.ts=0;t.src='';t.swiss=t.esri=t.ek=false;t.cr='';t.pf=null}loads.length=0;swissOn=esriOn=false;topoOn='';dirty=true},
+      restyle(){for(const t of all.values()){if(t.tex){t.tex.dispose();t.tex=null}t.ts=0;t.src='';t.swiss=t.esri=t.ek=t.gone=false;t.cr='';t.pf=null}loads.length=0;swissOn=esriOn=false;topoOn='';dirty=true},
+      refresh(){for(const t of all.values())t.src='';dirty=true},
       heights(){for(const t of all.values())if(t.mesh)t.stale=true;roots.forEach(t=>{t.queued=true;build.push(t)});dirty=true},
-      stats:()=>({esri:esriOn,esriOff:HP.maps.esriOff,esriTiles:drawn.filter(t=>t.vis!==false&&t.tex&&t.esri).length,dpx:+dpx().toFixed(2),onScreen:drawn.filter(t=>t.vis!==false).length,zs:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.z]=(o[t.z]||0)+1,o),{}),drawn:drawn.length,maxZ:Math.max(0,...drawn.map(t=>t.z)),own:drawn.filter(t=>t.tex).length,swiss:swissOn,tiles:all.size,ZB,ZG:ZG()}),
+      stats:()=>({ts:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.ts]=(o[t.ts]||0)+1,o),{}),esri:esriOn,esriOff:HP.maps.esriOff,esriTiles:drawn.filter(t=>t.vis!==false&&t.tex&&t.esri).length,dpx:+dpx().toFixed(2),onScreen:drawn.filter(t=>t.vis!==false).length,zs:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.z]=(o[t.z]||0)+1,o),{}),drawn:drawn.length,maxZ:Math.max(0,...drawn.map(t=>t.z)),own:drawn.filter(t=>t.tex).length,swiss:swissOn,tiles:all.size,ZB,ZG:ZG()}),
       dispose(){for(const t of [...all.values()])drop(t);group.remove(tg)}}})();
   const v=new THREE.Vector3();let down=null,playing=null,raf=0;
   const pick=(e,tol)=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,[a,b]=S.day?[DAYS[S.day-1].i0,DAYS[S.day-1].i1]:[0,N-1];let best=-1,bd=tol*tol;
@@ -1209,12 +1295,16 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     dispose(){alive=false;cancelAnimationFrame(raf);FP=null;stage.classList.remove('fp');fpEl.hidden=true;fpCap.hidden=true;$('#fpbtn').setAttribute('aria-pressed','false');TILES.dispose();[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};
   recolor();syncTools();applyMap();WXV.time(true);$('#msg').hidden=true;raf=requestAnimationFrame(loop);useDEM();
   // hikes saved before version 1.4 get the satellite picture and the detailed heights once, with a connection
-  // hikes in Switzerland saved before 2.2 get the Swiss national map as their offline map (three tries at most)
-  const need={sat:!BLOBS.sat,dem:!BLOBS.dem||!D.dem,topo:D.topoSrc!=='swisstopo'&&(D.topoTry||0)<3&&HP.maps.boxCH(HP.geo.lat(D.y0+D.h,14),HP.geo.lon(D.x0,14),HP.geo.lat(D.y0,14),HP.geo.lon(D.x0+D.w,14))};
+  // a hike restored from a backup gets its map picture again, and hikes in Switzerland saved before 2.2 get the Swiss national map
+  // as their offline map (three tries at most)
+  const need={sat:!BLOBS.sat,dem:!BLOBS.dem||!D.dem,topo:(D.topoTry||0)<3&&(!BLOBS.topo||D.topoSrc!=='swisstopo'&&HP.maps.boxCH(HP.geo.lat(D.y0+D.h,14),HP.geo.lon(D.x0,14),HP.geo.lat(D.y0,14),HP.geo.lon(D.x0+D.w,14)))};
   if((need.sat||need.dem||need.topo)&&navigator.onLine&&HP.fetchExtras&&D.id){const xp=$('#xpill'),what=need.sat?'Getting satellite pictures':need.dem?'Getting detailed heights':'Getting the Swiss map';xp.textContent=what+'…';xp.hidden=!(need.sat||need.dem);
     HP.fetchExtras(D,need,f=>{xp.textContent=`${what} ${Math.round(f*100)}%`},sig.signal).then(async x=>{if(!alive)return;
       if(x.dem&&x.demInfo){D.dem=x.demInfo;BLOBS.dem=x.dem;await HP.db.putBlob(D.id+':dem',x.dem);save();useDEM()}
-      if(x.topo){BLOBS.topo=x.topo;D.topoSrc=x.topoSrc;await HP.db.putBlob(D.id+':topo',x.topo);if(tex.topo){tex.topo.then(t=>t.dispose()).catch(()=>{});delete tex.topo}mapBtns();if(S.map==='topo')applyMap()}if(need.topo){if(!x.topo)D.topoTry=(D.topoTry||0)+1;save()}
+      if(x.topo){BLOBS.topo=x.topo;D.topoSrc=x.topoSrc;await HP.db.putBlob(D.id+':topo',x.topo);const old=tex.topo;delete tex.topo;mapBtns();
+        // the new picture goes under the tiles without reloading the live map tiles on top of it
+        const drop=keep=>{if(old)old.then(o=>{if(o!==keep)o.dispose()}).catch(()=>{})};
+        if(S.map==='topo')loadTex('topo').then(t=>{if(!alive||S.map!=='topo')return drop();GTEX=t;TILES.refresh();credit();drop(t)}).catch(()=>drop());else drop()}if(need.topo){if(!x.topo)D.topoTry=(D.topoTry||0)+1;save()}
       if(x.sat){BLOBS.sat=x.sat;await HP.db.putBlob(D.id+':sat',x.sat);mapBtns();if(!mapPicked){S.map='sat';applyMap();save()}syncTools();
         HP.thumb(D,x.sat).then(t=>t&&HP.setThumb&&HP.setThumb(D.id,t)).catch(()=>{})}
       xp.hidden=true}).catch(e=>{xp.hidden=true;if(alive)console.warn('extras',e)})}
@@ -1546,10 +1636,10 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
   const testStrike=hold=>{const now=performance.now();strike(now);nextStrike=now+(hold?1e9:5000);if(BS&&hold){BS.strokes=[{t:now,d:1e9,a:1}];BS.end=now+1e9}return!!BS};
   return{time(force){apply(force)},frame,ex(){U.uEx.value=S.ex;placeY();dirty=true;fitShadow()},U,prep,testStrike}}
 
-HP.viewer={open,close,current:()=>D,
+HP.viewer={open,close,current:()=>D,refresh:()=>{if(R)renderBrief()},
   // what the live guide needs: the route, the days, the places, the planned times, the map pictures and the trail check
   state:()=>R&&WALK?{D,R,N,DAYS,PTS,WALK,CLK,BLOBS,S,F:safety(),T:trailOK()?D.trail:null,cc:trailOK()?D.trail.cc||[]:[],sos:sosList(trailOK()?D.trail.cc:[]),TURN}:null,
-  show:i=>{if(!R)return;i=Math.max(0,Math.min(N-1,i|0));if(S.day&&R.day[i]!==S.day)selectDay(R.day[i],false);setIndex(i);if(V3&&V3.focus)V3.focus(i)},recheck:()=>runTrail(true),safety:()=>{if(!R)return null;const F=safety();return{lvl:F.lvl,items:F.items.map(x=>({lvl:x.lvl,k:x.k,i0:x.i0,i1:x.i1,what:x.what.replace(/<[^>]+>/g,''),where:whereOf(x).replace(/<[^>]+>/g,''),near:nearName(x.i0),day:R.day[x.i0],km:+kmIn(x.i0).toFixed(1)})),top:F.top.map(x=>x.k),marks:F.marks.length,junc:F.junc.length,hard:F.hard,mapped:+F.mapped.toFixed(3),marked:+F.marked.toFixed(3),checked:!!F.T}},updateForecast:()=>updateForecast(true),detail:k=>{try{return detail(k)}catch(e){console.error(e);return null}},
+  show:i=>{if(!R)return;i=Math.max(0,Math.min(N-1,i|0));if(S.day&&R.day[i]!==S.day)selectDay(R.day[i],false);setIndex(i);if(V3&&V3.focus)V3.focus(i)},recheck:()=>runTrail(true),safety:()=>{if(!R)return null;const F=safety();return{lvl:F.lvl,items:F.items.map(x=>({lvl:x.lvl,k:x.k,i0:x.i0,i1:x.i1,what:x.what.replace(/<[^>]+>/g,''),where:whereOf(x).replace(/<[^>]+>/g,''),why:String(x.why||'').replace(/<[^>]+>/g,''),near:nearName(x.i0),day:R.day[x.i0],km:+kmIn(x.i0).toFixed(1)})),top:F.top.map(x=>x.k),marks:F.marks.length,junc:F.junc.length,hard:F.hard,mapped:+F.mapped.toFixed(3),marked:+F.marked.toFixed(3),official:F.official==null?null:+F.official.toFixed(3),checked:!!F.T}},updateForecast:()=>updateForecast(true),detail:k=>{try{return detail(k)}catch(e){console.error(e);return null}},
   look:(k,jump)=>{if(V3)V3.look(k,jump)},
   pack:(k,on)=>{if(!D)return;D.packed=D.packed||{};if(on)D.packed[k]=1;else delete D.packed[k];save()}};
 })();

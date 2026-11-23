@@ -52,7 +52,7 @@ async def planning(b):
     sw, es, ot, cr = await plan_at(pg, urls, [46.53, 7.80], 13, "ch")
     check(sw > 0 and es == 0 and ot == 0, f"in Switzerland the planning map is the Swiss national map ({sw} Swiss tiles, {es} Esri, {ot} OpenTopoMap)")
     check(all("/14/" in u for u in urls if SW in u), "the Swiss tiles come one zoom closer, at twice the detail")
-    check(cr.strip() == "Map © swisstopo", f"its credit is swisstopo's: {cr!r}")
+    check(cr.strip() in ("Map © swisstopo", "Map © swisstopo, Routes © waymarkedtrails.org (CC-BY-SA)"), f"its credit is swisstopo's (and the marked routes'): {cr!r}")
     sw, es, ot, cr = await plan_at(pg, urls, [45.60, 24.64], 13, "ro")
     check(es > 0 and sw == 0 and ot == 0, f"in Romania it is Esri's Outdoor map ({es} tiles)")
     check(all("/arcgis/outdoor/static/tile/12/" in u for u in urls if ES in u), "Esri's 512-pixel tiles come one zoom out, with the detail of the map's own zoom")

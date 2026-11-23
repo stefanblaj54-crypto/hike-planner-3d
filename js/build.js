@@ -12,8 +12,10 @@ HP.route=async function(points,signal,o={}){
   const ll=points.map(p=>p.lon.toFixed(6)+','+p.lat.toFixed(6)).join('|'),lim=o.sac||4;
   const nogo=o.nogos&&o.nogos.length?'&nogos='+o.nogos.map(n=>`${n[0].toFixed(6)},${n[1].toFixed(6)},${Math.round(n[2])}`).join('|'):'';
   const url=`https://brouter.de/brouter?lonlats=${ll}&profile=hiking-mountain&alternativeidx=0&format=geojson&profile:SAC_scale_limit=${lim}&profile:SAC_scale_preferred=${Math.min(2,lim)}&profile:hiking_routes_preference=1.0${nogo}`;
-  let txt;try{const r=await fetch(url,{signal});txt=await r.text()}catch(e){if(signal&&signal.aborted)throw e;throw Error('The trail router could not be reached. Check the connection.')}
-  if(txt.trim()[0]!=='{')throw Error(/island|not mapped|no route/i.test(txt)?'No path found to one of the points. Move it closer to a trail.':'Routing failed: '+txt.slice(0,120));
+  let txt,st=200;try{const x=await HP.fetchT(url,{signal},90000,'text');txt=x.body;st=x.status}catch(e){if(signal&&signal.aborted)throw e;HP.log.net(url,e.message);
+    throw Error(e.timeout?'The trail router took too long to answer. Try again in a minute, or plan the hike in shorter parts.':'The trail router could not be reached. Check the connection.')}
+  if(txt.trim()[0]!=='{'){if(/island|not mapped|no route|position not mapped/i.test(txt))throw Error('No path found to one of the points. Move it closer to a trail.');
+    HP.log.net(url,st+' '+txt.slice(0,80));throw Error(st>=500||st===429?'The trail router is busy or down just now. Try again in a minute.':'The trail router could not plan this: '+txt.slice(0,100))}
   const f=JSON.parse(txt).features[0],co=f.geometry.coordinates,msgs=f.properties.messages||[],hdr=msgs[0]||[];
   const iLo=hdr.indexOf('Longitude'),iLa=hdr.indexOf('Latitude'),iT=hdr.indexOf('WayTags');
   const sac=new Uint8Array(co.length),km=new Map();co.forEach((c,k)=>{const s=Math.round(c[0]*1e6)+','+Math.round(c[1]*1e6);if(!km.has(s))km.set(s,[]);km.get(s).push(k)});
@@ -34,31 +36,81 @@ HP.easier=async function(D,spots,signal,prog){
   const climb=(a,b)=>{let u=0;for(let i=a;i<b;i++){const d=R.e[i+1]-R.e[i];if(d>0)u+=d}return u};
   const G=[];for(const x of spots.slice().sort((a,b)=>a.i0-b.i0)){const g=G[G.length-1];if(g&&R.d[x.i0]-R.d[g.i1]<2){g.i1=Math.max(g.i1,x.i1);g.items.push(x)}else G.push({i0:x.i0,i1:x.i1,items:[x]})}
   const kind=g=>g.items.every(x=>/drop|edge/.test(x.k))?'local':g.items.some(x=>x.lvl==='bad')?'must':'hard';
-  const reps=[];let lastB=0,calls=0;const total=G.reduce((n,g)=>n+{local:1,hard:2,must:4}[kind(g)],0);
+  const reps=[];let lastB=0,calls=0,answers=0,down=null;const total=G.reduce((n,g)=>n+{local:1,hard:2,must:4}[kind(g)],0);
   for(const g of G){const kd=kind(g),local=kd==='local';let best=null;
     const nogos=[];for(const x of g.items){for(let i=x.i0;i<=x.i1;i+=4)nogos.push([R.lon[i],R.lat[i],40]);nogos.push([R.lon[x.i1],R.lat[x.i1],40])}
     // first without T3 at all, near then further out; then, for a must-avoid place, allowing T3
     for(const lim of kd==='must'?[2,3]:[2]){for(const w of local?[1.5]:[1.5,5]){const a=Math.max(lastB,idx(R.d[g.i0]-w)),b=idx(R.d[g.i1]+w);if(a>=g.i0||b<=g.i1)continue;prog&&prog(++calls,total);
         const old=R.d[b]-R.d[a],maxX=local?Math.max(1.5,old*.5):Math.min(15,Math.max(3,old*.8));let r=null;
-        try{r=await HP.route([{lat:R.lat[a],lon:R.lon[a]},{lat:R.lat[b],lon:R.lon[b]}],signal,{sac:lim,nogos})}catch(e){if(signal&&signal.aborted)throw e}
+        // "no path" is an answer; a router that is busy, down or out of reach is not
+        try{r=await HP.route([{lat:R.lat[a],lon:R.lon[a]},{lat:R.lat[b],lon:R.lon[b]}],signal,{sac:lim,nogos});answers++}catch(e){if(signal&&signal.aborted)throw e;if(/No path/.test(e.message))answers++;else down=e}
         if(r&&r.pts.length>1&&r.km-old<=maxX){best={a,b,r,lim,old,extra:r.km-old,dUp:r.up-climb(a,b)};break}}
       if(best)break}
     if(best){reps.push({...best,g});lastB=best.b}else reps.push({g,fail:true})}
-  const ok=reps.filter(x=>!x.fail);if(!ok.length)return{reps,none:true};
+  const ok=reps.filter(x=>!x.fail);if(!ok.length){if(down&&!answers)throw down;return{reps,none:true,partial:!!down}}
   const pts=[],sac=[];let i=0;
   for(const x of ok){for(;i<x.a;i++){pts.push({lat:R.lat[i],lon:R.lon[i]});sac.push(R.sac[i]||0)}for(let k=0;k<x.r.pts.length;k++){pts.push(x.r.pts[k]);sac.push(x.r.sac[k]||0)}i=x.b+1}
   for(;i<N;i++){pts.push({lat:R.lat[i],lon:R.lon[i]});sac.push(R.sac[i]||0)}
   return{pts,sac:D.sacKnown?sac:null,reps,extra:ok.reduce((s,x)=>s+x.extra,0),dUp:ok.reduce((s,x)=>s+x.dUp,0),hard:D.sacKnown?Math.max(0,...sac):null}};
 
+/* ---------- the map for no signal (since 2.3), kept on the phone for the live guide ---------- */
+// In Switzerland: the Swiss national map in a band along the route (zoom 15 ±1.5 km, 16 ±600 m, 17 ±250 m), the detail its own
+// app shows. Elsewhere the paths, roads, streams, lakes, huts and signposts within 600 m of the route, from OpenStreetMap,
+// which the guide draws itself: sharp at any zoom, and the tile servers there don't allow saving their tiles for offline use.
+HP.strip=(()=>{const ZS=[[15,1500],[16,600],[17,250]];
+  const kindOf=D=>{const z=D.z||Z;return HP.maps.boxCH(geo.lat(D.y0+D.h,z),geo.lon(D.x0,z),geo.lat(D.y0,z),geo.lon(D.x0+D.w,z))?'swiss':'vec'};
+  function tiles(D){const R=D.route,N=R.lat.length,L=Math.max(.1,R.d[N-1]),sp=L*1000/N,set=new Set();
+    for(const[z,w]of ZS){const step=Math.max(1,Math.floor(w/2/sp));
+      for(let i=0;i<N;i+=step){const x=geo.x(R.lon[i],z),y=geo.y(R.lat[i],z),r=w/geo.mpp(R.lat[i],z);
+        for(let tx=Math.floor((x-r)/256);tx<=Math.floor((x+r)/256);tx++)for(let ty=Math.floor((y-r)/256);ty<=Math.floor((y+r)/256);ty++)set.add(z+'/'+tx+'/'+ty)}}
+    return[...set]}
+  // an estimate before anything is downloaded: about 27 kB a Swiss tile; the drawn map is small
+  const plan=D=>{const kind=kindOf(D);if(kind==='vec')return{kind,n:0,mb:Math.max(.3,D.route.d[D.route.lat.length-1]*.02)};const t=tiles(D);return{kind,n:t.length,mb:t.length*.027}};
+  async function saveSwiss(D,prog,signal){const pre=D.id+':m:',have=new Set(await HP.db.keys(pre)),all=tiles(D),list=all.filter(k=>!have.has(pre+k));
+    let i=0,done=all.length-list.length,bytes=0,run=0,okN=0,batch=[];const flush=async()=>{if(batch.length){const b=batch;batch=[];await HP.db.putMany(b)}};
+    const work=async()=>{while(i<list.length){if(signal&&signal.aborted)throw Error('Cancelled');if(run>=(okN?16:8))return;const k=list[i++],[z,x,y]=k.split('/').map(Number);let blob=null;
+      for(let a=0;a<3&&!blob;a++){try{const r=await HP.fetchT(HP.maps.swiss(z,x,y),{signal,mode:'cors'},15000,'blob');if(r.ok&&/^image\//.test(r.type)){blob=r.body;break}if(r.status===404)break}
+        catch(e){if(signal&&signal.aborted)throw Error('Cancelled');if(e.timeout&&!okN)break}await u.sleep(400*(a+1))}
+      if(blob){okN++;run=0;bytes+=blob.size;batch.push([pre+k,blob]);if(batch.length>=24)await flush()}else run++;prog&&prog(++done/all.length)}};
+    await Promise.all(Array.from({length:6},work));await flush();
+    if(run>=(okN?16:8))throw Error('The Swiss map is not answering just now. Try again later; the tiles saved so far are kept.');
+    const keys=await HP.db.keys(pre);let total=0;if(keys.length<all.length*.95)throw Error('Some of the map could not be saved. Try again to fill the gaps.');
+    for(const b of await Promise.all(keys.slice(0,40).map(k=>HP.db.blob(k))))total+=b?b.size:0;
+    return{kind:'swiss',n:keys.length,bytes:Math.round(total/Math.min(40,keys.length||1)*keys.length)}}
+  // the corridor as small boxes, each piece of route with 600 m around it
+  const boxes=(R,stepKm=.8,padM=600)=>{const out=[],m=R.lat.length;let a=0;
+    while(a<m-1){let b=a;while(b<m-1&&R.d[b]-R.d[a]<stepKm)b++;let S=90,N=-90,W=180,E=-180;for(let i=a;i<=b;i++){S=Math.min(S,R.lat[i]);N=Math.max(N,R.lat[i]);W=Math.min(W,R.lon[i]);E=Math.max(E,R.lon[i])}
+      const dl=padM/111320,dk=padM/(111320*Math.cos((S+N)/2*Math.PI/180));out.push(`${(S-dl).toFixed(5)},${(W-dk).toFixed(5)},${(N+dl).toFixed(5)},${(E+dk).toFixed(5)}`);a=b}
+    return out};
+  const HW={path:'p',footway:'p',steps:'p',bridleway:'p',cycleway:'p',pedestrian:'p',via_ferrata:'f',track:'t',service:'r',unclassified:'r',residential:'r',living_street:'r',road:'r',tertiary:'R',secondary:'R',primary:'R',trunk:'R'};
+  async function saveVec(D,prog,signal){const B=boxes(D.route),U=f=>B.map(f).join('');prog&&prog(.1);
+    const q=`[out:json][timeout:90][maxsize:134217728];(${U(b=>`way["highway"]["highway"~"^(${Object.keys(HW).join('|')})$"](${b});way["waterway"~"^(stream|river|canal)$"](${b});way["natural"~"^(water|glacier|cliff)$"](${b});`)}`+
+      `${U(b=>`node["tourism"~"^(alpine_hut|wilderness_hut|camp_site)$"](${b});node["amenity"~"^(shelter|drinking_water)$"](${b});node["natural"~"^(peak|saddle|spring)$"](${b});node["mountain_pass"="yes"](${b});node["information"="guidepost"](${b});`)});out body geom qt;`;
+    const els=await HP.overpass(q,signal);prog&&prog(.8);const ways=[],pois=[],seen=new Set();
+    for(const e of els){const t=e.tags||{};if(seen.has(e.type+e.id))continue;seen.add(e.type+e.id);
+      if(e.type==='way'&&e.geometry&&e.geometry.length>1){const k=t.highway?HW[t.highway]:t.waterway?(t.waterway==='river'?'W':'w'):t.natural==='water'?'L':t.natural==='glacier'?'g':t.natural==='cliff'?'c':null;if(!k)continue;
+        const c=new Int32Array(e.geometry.length*2);e.geometry.forEach((g,j)=>{c[j*2]=Math.round(g.lat*1e6);c[j*2+1]=Math.round(g.lon*1e6)});ways.push({k,c,n:t.name||''})}
+      else if(e.type==='node'){const k=/alpine_hut|wilderness_hut/.test(t.tourism||'')?'hut':t.tourism==='camp_site'?'camp':t.amenity==='shelter'?'shelter':t.amenity==='drinking_water'||t.natural==='spring'?'water':t.natural==='peak'?'peak':t.natural==='saddle'||t.mountain_pass==='yes'?'pass':t.information==='guidepost'?'post':null;
+        if(k)pois.push({k,la:e.lat,lo:e.lon,n:t.name||'',e:+t.ele||0})}}
+    const V={v:1,ways,pois};await HP.db.putBlob(D.id+':vec',V);prog&&prog(1);
+    return{kind:'vec',n:ways.length,bytes:ways.reduce((s,w)=>s+w.c.byteLength+40,0)+pois.length*60}}
+  async function save(D,prog,signal,force){const kind=force||kindOf(D),r=kind==='swiss'?await saveSwiss(D,prog,signal):await saveVec(D,prog,signal);
+    return{v:1,kind:r.kind,n:r.n,bytes:r.bytes,at:Date.now()}}
+  const remove=async id=>{await HP.db.delPrefix(id+':m:');await HP.db.delBlob(id+':vec')};
+  return{kindOf,tiles,plan,save,remove}})();
+
 /* ---------- tiles ---------- */
-async function getImage(url,signal){const r=await fetch(url,{signal,mode:'cors'});if(!r.ok)throw Error('HTTP '+r.status);const b=await r.blob();
+async function getImage(url,signal){const x=await HP.fetchT(url,{signal,mode:'cors'},15000,'blob');if(!x.ok){const e=Error('HTTP '+x.status);e.status=x.status;throw e}const b=x.body;
   if(self.createImageBitmap){try{return await createImageBitmap(b,{colorSpaceConversion:'none',premultiplyAlpha:'none'})}catch(e){}}
   return await new Promise((ok,no)=>{const im=new Image();im.onload=()=>ok(im);im.onerror=()=>no(Error('bad image'));im.src=URL.createObjectURL(b)})}
-async function loadTiles(list,conc,onEach,signal){let i=0,done=0;
-  const work=async()=>{while(i<list.length){if(signal&&signal.aborted)throw Error('Cancelled');const t=list[i++];let im=null;
-    for(let a=0;a<3&&!im;a++){try{im=await getImage(t.url,signal)}catch(e){if(signal&&signal.aborted)throw Error('Cancelled');await u.sleep(500*(a+1))}}
-    onEach(t,im,++done)}};
-  await Promise.all(Array.from({length:conc},work))}
+// Each tile gets a few tries, but a server that is down or hangs is given up on quickly: after 8 failures in a row with
+// nothing loaded (or 16 in a row later on) the rest is skipped and the caller decides what to do without it (since 2.3).
+async function loadTiles(list,conc,onEach,signal){let i=0,done=0,run=0,okN=0;const dead=()=>run>=(okN?16:8);
+  const work=async()=>{while(i<list.length&&!dead()){if(signal&&signal.aborted)throw Error('Cancelled');const t=list[i++];let im=null,gone=false;
+    for(let a=0;a<3&&!im&&!dead();a++){try{im=await getImage(t.url,signal)}catch(e){if(signal&&signal.aborted)throw Error('Cancelled');if(e.status===404){gone=true;break}if(e.timeout&&(a||!okN))break;await u.sleep(400*(a+1))}}
+    if(im){okN++;run=0}else if(!gone)run++;onEach(t,im,++done)}};
+  await Promise.all(Array.from({length:conc},work));
+  if(dead())for(const t of list.slice(i))onEach(t,null,++done)}
 const tileRange=(x0,y0,x1,y1)=>({tx0:Math.floor(x0/256),ty0:Math.floor(y0/256),tx1:Math.floor((x1-1)/256),ty1:Math.floor((y1-1)/256)});
 const tileCount=r=>(r.tx1-r.tx0+1)*(r.ty1-r.ty0+1);
 
@@ -66,8 +118,8 @@ async function loadDEM(bb,zd,prog,signal){
   const k=2**(zd-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k),W=(r.tx1-r.tx0+1)*256,H=(r.ty1-r.ty0+1)*256;
   const cv=document.createElement('canvas');cv.width=W;cv.height=H;const cx=cv.getContext('2d',{willReadFrequently:true});
   const list=[];for(let x=r.tx0;x<=r.tx1;x++)for(let y=r.ty0;y<=r.ty1;y++)list.push({x,y,url:`https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${zd}/${x}/${y}.png`});
-  let miss=0;await loadTiles(list,6,(t,im,done)=>{if(im){cx.drawImage(im,(t.x-r.tx0)*256,(t.y-r.ty0)*256);if(im.close)im.close()}else miss++;prog(done/list.length)},signal);
-  if(miss>list.length*.2)throw Error('Terrain data could not be downloaded. Check the connection and try again.');
+  let miss=0;await loadTiles(list,6,(t,im,done)=>{if(im){cx.drawImage(im,(t.x-r.tx0)*256,(t.y-r.ty0)*256);if(im.close)im.close()}else miss++;prog(Math.min(.99,done/list.length))},signal);
+  if(miss>list.length*.2){cv.width=cv.height=0;throw Error('The terrain heights could not be downloaded: the server is not answering. Check the connection and try again in a few minutes.')}
   const d=cx.getImageData(0,0,W,H).data,h=new Float32Array(W*H);cv.width=cv.height=0;
   for(let q=0;q<W*H;q++){const a=d[q*4+3];h[q]=a<128?NaN:d[q*4]*256+d[q*4+1]+d[q*4+2]/256-32768}
   let s=0,n=0;for(let q=0;q<h.length;q+=97)if(h[q]===h[q]){s+=h[q];n++}const fill=n?s/n:0;for(let q=0;q<h.length;q++)if(h[q]!==h[q]||h[q]<-500)h[q]=fill;
@@ -82,9 +134,9 @@ const topoURL=(z,x,y)=>`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${z}/${x}
 // the map picture kept with a hike for offline use: the Swiss national map when the whole model lies in Switzerland (its tiles one zoom
 // closer than the picture's own detail, as its site shows them), else OpenTopoMap. Esri's map may not be kept, so it is shown live only.
 const geoBox=bb=>[geo.lat(bb.y0+bb.h,Z),geo.lon(bb.x0,Z),geo.lat(bb.y0,Z),geo.lon(bb.x0+bb.w,Z)];
-function loadMapPic(bb,maxW,prog,signal){
+async function loadMapPic(bb,maxW,prog,signal){
   if(HP.maps.boxCH(...geoBox(bb))){let zs=16;while(zs>11){const k=2**(zs-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=(coarse()?160:240))break;zs--}
-    return loadTopo(bb,zs,maxW,prog,signal,HP.maps.swiss,'#f4f4ef',.86).then(b=>b?{blob:b,src:'swisstopo'}:null)}
+    const b=await loadTopo(bb,zs,maxW,prog,signal,HP.maps.swiss,'#f4f4ef',.86);if(b)return{blob:b,src:'swisstopo'}}
   let zt=15;while(zt>10){const k=2**(zt-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=(coarse()?110:160)&&bb.w*k<=7000)break;zt--}
   return loadTopo(bb,zt,maxW,prog,signal).then(b=>b?{blob:b,src:'otm'}:null)}
 // the most detailed zoom whose tiles fit the limits
@@ -141,6 +193,14 @@ async function fetchPOIs(b,signal){
   throw err||Error('Places unavailable')}
 const kindOf=t=>t.natural==='peak'?'peak':(t.mountain_pass==='yes'||t.natural==='saddle')?'pass':/alpine_hut|wilderness_hut/.test(t.tourism||'')?'hut':t.tourism==='camp_site'?'camp':t.amenity==='shelter'?'shelter':t.place?'village':t.natural==='water'?'lake':(t.natural==='spring'||t.amenity==='drinking_water')?'water':null;
 const NEAR={peak:110,pass:220,hut:280,camp:280,shelter:220,village:500,lake:700,water:160};
+// what a hut, a refuge or a campsite tells about itself on OpenStreetMap: phone, website, season, beds, booking (since 2.3)
+const hutOf=t=>{const h={phone:t.phone||t['contact:phone']||'',web:t.website||t['contact:website']||t.url||'',open:t.opening_hours||'',beds:+(t.beds||t.capacity)||0,
+  book:t.reservation||'',op:t.operator||''};for(const k of Object.keys(h))if(!h[k])delete h[k];if(h.phone)h.phone=h.phone.split(';')[0].trim();if(h.web&&!/^https?:/i.test(h.web))h.web='https://'+h.web.replace(/^\/+/,'');
+  return Object.keys(h).length?h:null};
+// the huts of a hike saved before 2.3: their details, found around each hut on the route
+HP.hutInfo=async function(D,signal){const hs=D.points.filter(p=>/hut|camp|shelter/.test(p.kind)).slice(0,24),R=D.route;if(!hs.length)return{};
+  const q=`[out:json][timeout:25];(${hs.map(p=>{const a=`around:400,${R.lat[p.i].toFixed(5)},${R.lon[p.i].toFixed(5)}`;return`nwr["tourism"~"^(alpine_hut|wilderness_hut|camp_site)$"](${a});nwr["amenity"="shelter"](${a});`}).join('')});out center tags;`;
+  const els=await HP.overpass(q,signal),out={};for(const el of els){const t=el.tags||{},name=t['name:en']||t.name;if(!name)continue;const h=hutOf(t);if(h&&hs.some(p=>p.name===name))out[name]=h}return out};
 async function placeName(lat,lon,signal){try{const j=await HP.fetchJSON(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(5)}&lon=${lon.toFixed(5)}&zoom=14&accept-language=en`,{signal},12000);const a=j.address||{};return a.village||a.hamlet||a.town||a.suburb||a.city||a.municipality||j.name||''}catch(e){if(signal&&signal.aborted)throw e;return''}}
 
 /* ---------- climate statistics and forecast (Open-Meteo) ---------- */
@@ -300,13 +360,14 @@ HP.buildPlan=async function(input,opts,progress,signal){
   let els=[];try{els=await fetchPOIs(box,signal)}catch(e){if(signal&&signal.aborted)throw e;console.warn('places',e)}
   const kx=Math.cos(cLat*Math.PI/180)*111320,ky=110540;
   const near=(lat,lon)=>{let bi=0,bd=1e18;for(let i=0;i<m;i+=1){const dx=(R.lon[i]-lon)*kx,dy=(R.lat[i]-lat)*ky,dd=dx*dx+dy*dy;if(dd<bd){bd=dd;bi=i}}return{i:bi,d:Math.sqrt(bd)}};
-  const points=[],official={},water=[],peaks=[],seen=new Set();
+  const points=[],official={},water=[],peaks=[],seen=new Set(),huts={};
   for(const el of els){const t=el.tags||{},kind=kindOf(t);if(!kind)continue;const lat=el.lat??el.center?.lat,lon=el.lon??el.center?.lon;if(lat==null)continue;
     const nr=near(lat,lon),ele=parseFloat(String(t.ele||'').replace(',','.'));
     if(kind==='water'){if(nr.d<NEAR.water)water.push(nr.i);continue}
     const name=t['name:en']||t.name;if(!name)continue;
     if(kind==='peak'&&nr.d>NEAR.peak){peaks.push({name,lat,lon,ele:isFinite(ele)?ele:null});continue}
     if(nr.d>NEAR[kind]||seen.has(name))continue;seen.add(name);
+    if(/hut|camp|shelter/.test(kind)){const h=hutOf(t);if(h)huts[name]=h}
     points.push({name,kind,i:nr.i,dist:nr.d});if((kind==='pass'||kind==='peak')&&isFinite(ele))official[name]=Math.round(ele)}
   for(const w of input.wpts||[]){const nr=near(w.lat,w.lon);if(nr.d<300&&!seen.has(w.name)){seen.add(w.name);points.push({name:w.name,kind:'wpt',i:nr.i,dist:nr.d})}}
   // a pass or summit on the route sits at the highest point near it
@@ -328,7 +389,7 @@ HP.buildPlan=async function(input,opts,progress,signal){
   // 5. assemble, days and times
   const grid={step:GS,cols,rows,h:gh};
   const D={v:2,name:opts.name||`${names.start||'Hike'} to ${names.end||'finish'}`,date:opts.date,created:Date.now(),z:Z,w:bb.w,h:bb.h,mpp,x0:bb.x0,y0:bb.y0,center:{lat:cLat,lon:cLon},
-    grid,dem:demR.info,route:R,seg,sacKnown,points:points.sort((a,b)=>a.i-b.i).map(({name,kind,i})=>({name,kind,i})),landmarks,official,water:[...new Set(water)].sort((a,b)=>a-b),names,terr:{min:hmin,max:hmax},
+    grid,dem:demR.info,route:R,seg,sacKnown,points:points.sort((a,b)=>a.i-b.i).map(({name,kind,i})=>({name,kind,i})),huts,hutsAt:Date.now(),landmarks,official,water:[...new Set(water)].sort((a,b)=>a-b),names,terr:{min:hmin,max:hmax},
     set:{start:opts.start||'07:00',pace:+opts.pace||1,breaks:opts.breaks!==false,wx:'fair',mon:u.parseDay(opts.date).getMonth()+1,ex:1.5,map:sat?'sat':topo?'topo':'relief',color:'day'}};
   const total=seg.reduce((s,v)=>s+v,0)*D.set.pace;
   const nd=opts.days==='auto'||!opts.days?Math.max(1,Math.round(total/6.5)):+opts.days;
@@ -338,11 +399,11 @@ HP.buildPlan=async function(input,opts,progress,signal){
   // 7. climate and forecast
   step('weather',.15);
   let zlo=Math.max(0,Math.min(hmin,Math.min(...D.days.map(d=>d.min)))),zhi=Math.max(zlo+800,Math.max(...D.days.map(d=>d.max))+300);
-  try{D.clim=await HP.fetchClimate(cLat,cLon,zlo,zhi,signal)}catch(e){if(signal&&signal.aborted)throw e;console.warn('climate',e);D.clim=HP.roughClimate(cLat,zlo,zhi)}
-  step('weather',.6);
-  D.tz=D.clim.tz;D.fc=null;
-  if(HP.forecastWindow(D.date).ok){try{D.fc=await HP.fetchForecast(D,signal);D.tz=D.tz||D.fc.tz;D.set.wx='fc'}catch(e){if(signal&&signal.aborted)throw e;console.warn('forecast',e)}
-    try{D.ens=await HP.fetchEnsemble(D,signal)}catch(e){if(signal&&signal.aborted)throw e;console.warn('forecast runs',e)}}
+  // the records, the forecast and the forecast runs are asked for together, so a slow server costs its own wait only once
+  D.fc=null;const inFc=HP.forecastWindow(D.date).ok,soft=(what,p)=>p.catch(e=>{if(signal&&signal.aborted)throw e;console.warn(what,e);return null});
+  const[clim,fc,ens]=await Promise.all([soft('climate',HP.fetchClimate(cLat,cLon,zlo,zhi,signal)),inFc?soft('forecast',HP.fetchForecast(D,signal)):null,inFc?soft('forecast runs',HP.fetchEnsemble(D,signal)):null]);
+  D.clim=clim||HP.roughClimate(cLat,zlo,zhi);step('weather',.8);D.tz=D.clim.tz;
+  if(fc){D.fc=fc;D.tz=D.tz||fc.tz;D.set.wx='fc'}if(ens)D.ens=ens;
   step('weather',1,D.fc?'forecast and climate':D.clim.rough?'rough climate estimate':'climate statistics');
   if(topoR)D.topoSrc=topoR.src;
   return{D,blobs:{topo,relief,sat,dem:demR.blob}}};

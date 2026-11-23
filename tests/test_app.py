@@ -46,6 +46,8 @@ async def mock(ctx, log):
     await ctx.route("https://static-map-tiles-api.arcgis.com/**", outdoor)
     # Swiss trail closures (none, unless a test sets DYN["closures"]) and the country for the emergency numbers
     async def closures(r):
+        if "swisstlm3d-wanderwege" in r.request.url:   # the official Swiss hiking trails: real swisstopo data along the Bärentrek
+            await r.fulfill(status=200, content_type="application/json", body=mocks.swiss_trails(r.request.url), headers=HDR); return
         await r.fulfill(status=200, content_type="application/json", body=json.dumps({"results": DYN.get("closures", [])}), headers=HDR)
     await ctx.route("https://api3.geo.admin.ch/**", closures)
     async def nomi(r):

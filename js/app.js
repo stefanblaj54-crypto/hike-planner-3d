@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='2.2';
+const VERSION='2.3';
 const SCREENS=['home','new','build','view','custom','about','inv','detail'];
 let cur='',viewId=null,building=null,installEvt=null,pendingDet=null,pendingLook=null,pendingShow=null,pendingGuide=false,viewScroll=0;
 
@@ -34,7 +34,7 @@ async function routeTo(h,target){
   if(target==='view')return openHike(decodeURIComponent(h.slice(5)));
   if(target==='new'){if(cur!=='new'&&cur!=='build')openNew();return}
   if(target==='custom'){if(cur!=='custom'){show('custom','Customize');renderCustom()}return}
-  if(target==='about'){show('about','About');$('#ver').textContent=`Version ${VERSION}`;return}
+  if(target==='about'){show('about','About');$('#ver').textContent=`Version ${VERSION}`;logNote();return}
   if(target==='inv'){if(cur!=='inv'){show('inv','Inventory');renderInv()}return}
   showHome();offerResume()}
 addEventListener('popstate',route);
@@ -165,7 +165,8 @@ async function renderList(up,past,list){const P=LOOK.get(),cards=P.list==='cards
   const tk=list.reduce((s,m)=>s+(+m.km||0),0),tu=list.reduce((s,m)=>s+(+m.up||0),0);
   $('#totals').textContent=P.totals&&list.length>1?`${list.length} hikes · ${fmtKm(tk)} km · ${nf.format(Math.round(tu/10)*10)} m up`:'';
   $('#hikes').innerHTML=up.map(m=>row(m,false)).join('')+(past.length?`<h3 class="past-h micro">Past hikes</h3>`+past.map(m=>row(m,true)).join(''):'');
-  const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Stored on this phone only. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © swisstopo':'')+'.':''}`}
+  const sat=Object.keys(pics).length||list.some(m=>m.thumb);$('#foot').innerHTML=`Stored on this phone only${list.length?` · last backup: ${lastBackup()} · <button type="button" class="lnk" id="footbk">Back up</button>`:''}. Map data © OpenStreetMap contributors.${sat?' '+SATCREDIT.replace('Satellite picture','Satellite pictures')+(list.some(m=>inSwiss(m.center))?' · Aerial pictures © swisstopo':'')+'.':''}`}
+$('#foot').addEventListener('click',e=>{if(e.target.id==='footbk')backupDialog()});
 $('#hikes').addEventListener('click',e=>{const b=e.target.closest('.hike');if(!b)return;vtPic=b.querySelector('img.cov')||null;go('#/hike/'+encodeURIComponent(b.dataset.id))});
 $('#hero').addEventListener('click',e=>{const r=e.target.closest('.ring[data-det]');if(r&&nextMeta){pendingDet=r.dataset.det;go('#/hike/'+encodeURIComponent(nextMeta.id));return}const b=e.target.closest('[data-act]');if(!b)return;const a=b.dataset.act;
   if(a==='open'&&nextMeta){vtPic=document.querySelector('#hero img.cov')||null;go('#/hike/'+encodeURIComponent(nextMeta.id))}else if(a==='new'||a==='draw'){go('#/new');setMode('draw')}else if(a==='import')startImport()});
@@ -202,10 +203,44 @@ function openDrawer(){const d=$('#drawer');HP.motion.open(d);$('#menubtn').setAt
 function closeDrawer(now){const d=$('#drawer');if(now)d.hidden=true;else HP.motion.close(d);$('#menubtn').setAttribute('aria-expanded','false');$('#menubtn').focus()}
 $('#menubtn').addEventListener('click',openDrawer);$('#dclose').addEventListener('click',closeDrawer);
 $('#drawer').addEventListener('click',e=>{if(e.target.id==='drawer'){closeDrawer();return}const b=e.target.closest('[data-go]');if(!b)return;const g=b.dataset.go;closeDrawer(/^(home|new|customize|inventory|about)$/.test(g));
-  if(g==='home'){if(cur!=='home')go('#/')}else if(g==='new'){go('#/new');setMode('draw')}else if(g==='import')startImport();else if(g==='customize')go('#/customize');else if(g==='inventory')go('#/inventory');else if(g==='about')go('#/about');else if(g==='install')installNow()});
+  if(g==='home'){if(cur!=='home')go('#/')}else if(g==='new'){go('#/new');setMode('draw')}else if(g==='import')startImport();else if(g==='backup')backupDialog();else if(g==='customize')go('#/customize');else if(g==='inventory')go('#/inventory');else if(g==='about')go('#/about');else if(g==='install')installNow()});
 async function storageNote(){const n=lastList.length;let t=n?`${n} ${n>1?'hikes':'hike'} saved on this phone`:'No hikes saved yet';
   try{const e=navigator.storage&&await navigator.storage.estimate();if(e&&e.usage&&n)t+=`, using ${(e.usage/1048576).toFixed(e.usage<10485760?1:0)} MB`}catch(x){}
-  $('#dfoot').textContent=`${t}. Version ${VERSION}.`}
+  if(n)t+=`. Last backup: ${lastBackup()}`;$('#dfoot').textContent=`${t}. Version ${VERSION}.`}
+/* ---------- backup and restore (since 2.3): the hikes live only on this phone, so a file keeps them safe ---------- */
+const lastBackup=()=>{let b=0;try{b=+localStorage.getItem('hp-backup')||0}catch(e){}return b?new Date(b).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'never'};
+function backupDialog(){const n=lastList.length,one=n===1;
+  ask(`<p><b>Back up your hikes</b></p><p>Your ${one?'hike is':'hikes are'} kept only on this phone. A backup file holds ${n>1?`all ${n} of them`:one?'it':'them'}, with your inventory and look, so you can bring ${one?'it':'them'} back on this phone or a new one. Keep it somewhere safe, like iCloud Drive, Google Drive or an email to yourself.</p>
+    <p class="mute small">Last backup: ${lastBackup()}.</p><div class="abtns"><button type="button" class="btn primary" id="bksave"${n?'':' disabled'}>Save a backup</button><button type="button" class="btn" id="bkload">Restore from a backup</button></div>`,{html:true,ok:'Close',cancel:false})}
+$('#dlgmsg').addEventListener('click',e=>{const b=e.target.closest('#bksave,#bkload');if(!b)return;$('#dlgok').click();if(b.id==='bksave')saveBackup();else $('#bkfile').click()});
+async function saveBackup(){HP.toast('Making the backup…');let txt;try{txt=await HP.backup.make()}catch(e){HP.log.add('backup',e.message);HP.toast('The backup could not be made: '+e.message);return}
+  const fname=`hike-planner-backup-${isoDay(new Date())}.json`,file=new File([txt],fname,{type:'application/json'}),mb=(file.size/1048576).toFixed(1);
+  const done=()=>{try{localStorage.setItem('hp-backup',Date.now())}catch(e){}};
+  if(coarse&&navigator.canShare){try{if(navigator.canShare({files:[file]})){await navigator.share({files:[file],title:'Hike Planner backup'});done();HP.toast(`Backup saved (${mb} MB)`);return}}catch(e){if(e.name==='AbortError')return}}
+  HP.download(fname,file);done();HP.toast(`Backup saved to your downloads (${mb} MB)`)}
+$('#bkfile').addEventListener('change',async e=>{const f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
+  try{const r=await HP.backup.restore(await f.text()),k=n=>`${n} ${n>1?'hikes':'hike'}`;
+    const msg=r.added||r.updated?`Restored ${k(r.added+r.updated)}${r.same?` (${k(r.same)} already here)`:''}.${r.added?r.added>1?' Their pictures come back the first time you open each one with a connection.':' Its pictures come back the first time you open it with a connection.':''}`
+      :r.total>1?`All ${k(r.total)} in this backup are already on this phone.`:'The hike in this backup is already on this phone.';
+    await ask(msg,{ok:'OK',cancel:false});if(cur==='home')renderHome();else go('#/')}
+  catch(err){HP.log.add('restore',err.message);ask(err.message||'This backup could not be read.',{ok:'OK',cancel:false})}});
+
+/* ---------- problem details: what went wrong lately, ready to paste in a message (since 2.3) ---------- */
+function logNote(){const L=HP.log.list(),n=L.reduce((a,l)=>a+(l.n||1),0);
+  $('#logn').textContent=n?`${n} ${n>1?'problems':'problem'} noted since ${new Date(L[0].t).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}.`:'No problems noted on this phone.'}
+async function problemText(){const L=HP.log.list().reverse(),when=t=>new Date(t).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  let st='';try{const e=navigator.storage&&await navigator.storage.estimate();if(e&&e.usage)st=`${(e.usage/1048576).toFixed(0)} MB used`;
+    const p=navigator.storage&&navigator.storage.persisted&&await navigator.storage.persisted();st+=(st?', ':'')+(p?'kept safe':'may be cleared by the phone')}catch(x){}
+  let bk='never';try{const b=+localStorage.getItem('hp-backup');if(b)bk=when(b)}catch(x){}
+  const head=[`Hike Planner 3D ${VERSION}: problem details`,`When: ${when(Date.now())}`,`Phone: ${navigator.userAgent}`,
+    `Screen: ${screen.width}×${screen.height} at ${devicePixelRatio}×, ${innerWidth}×${innerHeight} shown · installed: ${standalone()?'yes':'no'} · online: ${navigator.onLine?'yes':'no'}`,
+    `Hikes: ${lastList.length} · storage: ${st||'unknown'} · last backup: ${bk}`,`Open now: ${location.hash||'#/'}`];
+  const body=L.length?L.map(l=>`- ${when(l.t)} · ${l.k}${l.w?' · '+l.w:''} · ${l.m}${l.n>1?` (×${l.n})`:''} · on ${l.h}${l.v&&l.v!==VERSION?' · version '+l.v:''}`):['- No problems noted.'];
+  return[...head,'','Problems, newest first:',...body].join('\n')}
+$('#copylog').addEventListener('click',async()=>{const t=await problemText();
+  try{await navigator.clipboard.writeText(t);HP.toast('Copied. Paste it in your message to Claude.')}
+  catch(e){ask(`<p>Copy this and paste it in your message to Claude:</p><textarea class="logtxt" readonly>${HP.u.esc(t)}</textarea>`,{html:true,ok:'Done',cancel:false});
+    setTimeout(()=>{const a=$('.logtxt');if(a){a.focus();a.select()}},60)}});
 
 /* ---------- Inventory: the person's own gear, named by the packing advice ---------- */
 const INVEX={shirt:'e.g. Patagonia Capilene Cool',base:'e.g. Icebreaker 200 Oasis',fleece:'e.g. Patagonia R1',shell:"e.g. Arc'teryx Beta AR",puffy:'e.g. Rab Microlight Alpine',trousers:'e.g. Fjällräven Keb',
@@ -287,6 +322,9 @@ function initMap(){let v={center:[46.6,15],zoom:5};try{const s=JSON.parse(localS
   map=L.map('pmap',{zoomControl:false,doubleClickZoom:false,tapTolerance:18}).setView(v.center,v.zoom);if(!coarse)L.control.zoom({position:'bottomright'}).addTo(map);
   // the Swiss national map in Switzerland, Esri's Outdoor map elsewhere (OpenTopoMap if Esri can't answer)
   map.attributionControl.setPrefix(false);HP.maps.leaflet(map);
+  // the marked hiking routes, on unless switched off (remembered)
+  let wmt=null;const wmtOn=()=>{try{return localStorage.getItem('hp-wmt')!=='0'}catch(e){return true}},wmtSet=()=>{const on=wmtOn();$('#wmt').setAttribute('aria-pressed',String(on));if(on&&!wmt)wmt=HP.maps.routes(map);else if(!on&&wmt){map.removeLayer(wmt);wmt=null}};
+  $('#wmt').addEventListener('click',()=>{try{localStorage.setItem('hp-wmt',wmtOn()?'0':'1')}catch(e){}wmtSet();HP.toast(wmtOn()?'Marked hiking routes shown':'Marked hiking routes hidden')});wmtSet();
   lineLayer=L.layerGroup().addTo(map);wpLayer=L.layerGroup().addTo(map);locLayer=L.layerGroup().addTo(map);
   map.on('click',e=>{if(NEW.mode!=='draw')return;pushHist();NEW.pts.push({lat:e.latlng.lat,lon:e.latlng.lng});changed()});
   map.on('moveend',()=>{const c=map.getCenter();try{localStorage.setItem('hp-view',JSON.stringify({center:[+c.lat.toFixed(5),+c.lng.toFixed(5)],zoom:map.getZoom()}))}catch(e){}});
@@ -318,6 +356,7 @@ function insertOnLine(ll){const r=NEW.routed;if(!r)return;const near=(p,from)=>{
   at=Math.min(Math.max(1,at),NEW.pts.length-1);pushHist();NEW.pts.splice(at,0,{lat:ll.lat,lon:ll.lng});changed()}
 function changed(){NEW.routed=null;NEW.err='';drawWps();drawLine();updateHow();updateBuildBtn();clearTimeout(rTimer);if(rAC){rAC.abort();rAC=null}
   if(NEW.pts.length<2){updateStats();return}$('#rstats').innerHTML='<span class="mute">Finding the trail…</span>';rTimer=setTimeout(doRoute,300)}
+$('#rstats').addEventListener('click',e=>{if(e.target.id!=='rretry'||NEW.pts.length<2)return;NEW.err='';$('#rstats').innerHTML='<span class="mute">Finding the trail…</span>';doRoute()});
 async function doRoute(){const ac=rAC=new AbortController();
   try{const r=await HP.route(NEW.pts,ac.signal);if(ac!==rAC)return;NEW.routed=r;NEW.err=''}
   catch(e){if(ac.signal.aborted)return;NEW.err=e.message}
@@ -330,7 +369,8 @@ function summary(pts,sac){let L0=0,up=0,dn=0,ref=NaN,hasE=false;
   const km=L0/1000,hz=km/4,vt=up/300+dn/500,t=Math.max(hz,vt)+Math.min(hz,vt)/2;let g=0;if(sac)for(const v of sac)g=Math.max(g,v);
   return`<b>${km.toFixed(km<20?1:0)} km</b>`+(hasE?` · ${nf.format(Math.round(up/10)*10)} m up · ${nf.format(Math.round(dn/10)*10)} m down · about ${fmtH(t)} walking at an average pace`:' · heights are added when the plan is built')+(g?` · hardest section T${g}`:'')+(km>110?`<br><span class="err">This is longer than the app can handle in one plan (about 120 km). Split it into parts.</span>`:'')}
 function updateStats(){const el=$('#rstats');
-  if(NEW.mode==='draw')el.innerHTML=NEW.err?`<span class="err">${esc(NEW.err)}</span>`:NEW.routed?summary(NEW.routed.pts,NEW.routed.sac):'';
+  // a router that didn't answer can be asked again without moving a point
+  if(NEW.mode==='draw')el.innerHTML=NEW.err?`<span class="err">${esc(NEW.err)}</span>${/reached|too long|busy/.test(NEW.err)?' <button type="button" class="lnk" id="rretry">Try again</button>':''}`:NEW.routed?summary(NEW.routed.pts,NEW.routed.sac):'';
   else el.innerHTML=NEW.err&&!NEW.file?`<span class="err">${esc(NEW.err)}</span>`:NEW.file?summary(NEW.file.pts):''}
 function updateBuildBtn(){$('#buildbtn').disabled=!(NEW.mode==='draw'?NEW.routed:NEW.file)||!$('#hdate').value}
 $('#hdate').addEventListener('input',updateBuildBtn);
@@ -408,6 +448,7 @@ async function runBuild(input,opts,from=null){lastBuild={input,opts,from};
     replace('#/hike/'+encodeURIComponent(D.id))}
   catch(e){if(ac.signal.aborted||ac!==building)return;building=null;console.error(e);
     const li=$('#steps li.work');if(li)stepSet(li.dataset.k,-1);
+    if(!/Cancelled/.test(e.message))HP.log.add('build',e.message||String(e),(e.stack||'').split('\n')[1]||'');
     $('#berr').hidden=false;$('#berr').textContent=/Cancelled/.test(e.message)?'Cancelled.':e.message||'Something went wrong.';$('#bagain').hidden=false;$('#bcancel').textContent=from?'Back to the hike':'Back to the route'}}
 $('#bagain').addEventListener('click',()=>{if(lastBuild)runBuild(lastBuild.input,lastBuild.opts,lastBuild.from)});
 
@@ -433,10 +474,10 @@ async function findEasier(btn){const D=HP.viewer.current(),F=HP.viewer.safety();
   const spots=F.items.filter(x=>x.lvl!=='info'&&EASYK.test(x.k));if(!spots.length){HP.toast('Nothing on this route needs a way round.');return}
   const label=btn.innerHTML,say=(n,t)=>{btn.innerHTML=`<span class="spin" aria-hidden="true"></span>Looking for an easier way${t?` · ${Math.min(n,t)} of ${t}`:''}`};
   btn.disabled=true;btn.classList.add('busy');say(0,0);let r=null;
-  try{r=await HP.easier(D,spots,null,say)}catch(e){console.warn(e)}finally{btn.disabled=false;btn.classList.remove('busy');btn.innerHTML=label}
+  let err=null;try{r=await HP.easier(D,spots,null,say)}catch(e){err=e;console.warn('easier',e)}finally{btn.disabled=false;btn.classList.remove('busy');btn.innerHTML=label}
   if(HP.viewer.current()!==D)return;
-  if(!r){HP.toast('The trail router could not be reached. Try again later.');return}
-  if(r.none){await ask('No easier way nearby: the hard places are on the only paths through. Plan a different hike, or go with someone experienced.',{cancel:false});return}
+  if(!r){HP.toast(err&&/trail router/.test(err.message)?err.message:'The trail router could not be reached. Try again later.',5000);return}
+  if(r.none){await ask(r.partial?'No easier way found, but the trail router did not answer for some of the hard places. Try again in a minute.':'No easier way nearby: the hard places are on the only paths through. Plan a different hike, or go with someone experienced.',{cancel:false});return}
   const name=x=>{const y=x.g.items.find(y=>y.k==="sac")||x.g.items[0];return`${esc(y.near||`Day ${y.day}, km ${y.km}`)}: ${esc(y.what.charAt(0).toLowerCase()+y.what.slice(1))}`};
   const done=r.reps.filter(x=>!x.fail),left=r.reps.filter(x=>x.fail),sg=(v,u,d=0)=>`${v>=0?'+':'−'}${Math.abs(v).toFixed(d)}<i> ${u}</i>`;
   const html=`<b class="dlgt">An easier way</b><ul class="kpis ecmp"><li><b>${sg(r.extra,'km',1)}</b><span>distance</span></li><li><b>${sg(Math.round(r.dUp/10)*10,'m')}</b><span>climbing</span></li>${r.hard!=null?`<li><b>${r.hard?'T'+r.hard:'–'}</b><span>hardest</span></li>`:''}</ul>`+
@@ -446,7 +487,9 @@ async function findEasier(btn){const D=HP.viewer.current(),F=HP.viewer.safety();
   if(!await ask(html,{html:true,ok:'Create this hike'}))return;
   await leaveDetail();await flushSave();const from=D.id,st=D.set||{};HP.viewer.close();viewId=null;
   runBuild({pts:r.pts,sac:r.sac,wpts:[],names:{}},{name:`${D.name} · easier`.slice(0,80),date:D.date,days:String(D.days.length),start:st.start||'07:00',pace:String(st.pace||1),breaks:!!st.breaks},from)}
-$('#scr-view .cards').addEventListener('click',e=>{const b=e.target.closest('[data-act="easier"]');if(b)findEasier(b)});
+$('#scr-view .cards').addEventListener('click',e=>{const b=e.target.closest('[data-act="easier"]');if(b)findEasier(b);
+  if(e.target.closest('[data-act="strip"]')){const D=HP.viewer.current();if(D)stripAsk(D);return}
+  if(e.target.closest('[data-act="trailretry"]')){if(!navigator.onLine){HP.toast('Connect to the internet to check the trail.');return}HP.viewer.recheck()}});
 
 /* ---------- the live guide: over the open hike, with its own step in the history so Back closes it ---------- */
 function openGuide(){if(cur!=='view'||HP.guide.active())return;history.pushState({d:depth()+1,guide:1},'',location.hash);syncGuide()}
@@ -495,7 +538,37 @@ $('#detail').addEventListener('click',e=>{const b=e.target.closest('[data-dact]'
   else if(a==='easier')findEasier(b);
   else if(a==='recheck'){if(!navigator.onLine){HP.toast('Connect to the internet to check the trail.');return}HP.toast('Checking the trail…');b.disabled=true;
     Promise.resolve(HP.viewer.recheck()).then(()=>{if(history.state&&history.state.det==='safety'){const r=HP.viewer.detail('safety');if(r)$('#detail').innerHTML=r.html}})}});
-$('#more').addEventListener('click',()=>{HP.motion.open($('#sheet'));$('#sheet .row').focus()});
+$('#more').addEventListener('click',()=>{const D=HP.viewer.current();if(D)$('#striprow').textContent=HP.stripRun&&HP.stripRun.id===D.id?`Saving the map for no signal… ${Math.round((HP.stripRun.f||0)*100)}%`:D.strip?`Map for no signal: saved (${mbOf(D.strip.bytes)})`:'Save the map for no signal';
+  HP.motion.open($('#sheet'));$('#sheet .row').focus()});
+/* ---------- the map for no signal (since 2.3): saved along the route for the live guide ---------- */
+const mbOf=b=>b<1048576?`${Math.max(.1,b/1048576).toFixed(1)} MB`:`${Math.round(b/1048576)} MB`;
+HP.stripRun=null;
+let stripStep=-1;
+function stripSay(id,f){if(HP.stripRun&&HP.stripRun.id===id)HP.stripRun.f=f;const xp=$('#xpill'),D=HP.viewer.current();
+  const st=Math.round(f*20);if(st!==stripStep&&D&&D.id===id){stripStep=st;HP.viewer.refresh&&HP.viewer.refresh()}
+  if(D&&D.id===id&&cur==='view'){if(f>=0&&f<1){xp.textContent=`Saving the map for no signal… ${Math.round(f*100)}%`;xp.hidden=false}else xp.hidden=true}
+  document.dispatchEvent(new CustomEvent('hp-strip',{detail:{id,f}}))}
+async function stripAsk(D){if(HP.stripRun)return;
+  if(D.strip){if(await ask(`The map for no signal is saved on this phone (${mbOf(D.strip.bytes)}, ${new Date(D.strip.at).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}). Delete it to free the space?`,{ok:'Delete it',danger:true})){
+      await HP.strip.remove(D.id);await setStrip(D,null);HP.toast('The map for no signal is deleted');HP.viewer.refresh&&HP.viewer.refresh()}return}
+  if(!navigator.onLine){HP.toast('Connect to the internet to save the map.');return}
+  const p=HP.strip.plan(D),msg=p.kind==='swiss'?`Save the Swiss national map in a band along the whole route, so the live guide shows it sharply when there is no signal? About ${Math.max(1,Math.round(p.mb))} MB; best on Wi-Fi.`
+    :'Save the paths, roads, streams, lakes, huts and signposts within 600 m of the route, so the live guide shows them sharply when there is no signal? It takes about 1 MB.';
+  if(await ask(msg,{ok:'Save'}))saveStrip(D)}
+async function saveStrip(D){if(HP.stripRun)return;if(!navigator.onLine){HP.toast('Connect to the internet to save the map.');return}
+  const ac=new AbortController();HP.stripRun={id:D.id,f:0,ac};stripSay(D.id,0);HP.viewer.refresh&&HP.viewer.refresh();
+  try{const r=await HP.strip.save(D,f=>stripSay(D.id,f),ac.signal);await setStrip(D,r);HP.toast(`The map for no signal is saved (${mbOf(r.bytes)})`)}
+  catch(e){if(e.name!=='AbortError'&&!/Cancelled/.test(e.message)){HP.log.add('strip',e.message);HP.toast(e.message,6000)}}
+  finally{HP.stripRun=null;stripSay(D.id,1);HP.viewer.refresh&&HP.viewer.refresh();
+    // a hike deleted while its map was saving leaves nothing behind
+    HP.db.meta(D.id).then(m=>{if(!m)setTimeout(()=>HP.strip.remove(D.id).catch(()=>{}),3000)}).catch(()=>{})}}
+// the plan notes the saved map, straight away and on the newest copy of this hike: the person may have opened another hike
+// meanwhile, or this one again, or deleted it (then the saved map goes too)
+async function setStrip(D,r){await flushSave();const C=HP.viewer.current(),P=C&&C.id===D.id?C:await HP.db.plan(D.id).catch(()=>null);
+  if(!P){await HP.strip.remove(D.id).catch(()=>{});return}
+  for(const x of new Set([D,P])){if(r)x.strip=r;else delete x.strip}
+  try{await HP.db.putPlan(P.id,P)}catch(e){HP.toast('Could not save the change: '+e.message)}}
+HP.saveStrip=saveStrip;HP.stripAsk=stripAsk;
 // the hike's menu can be dragged down to close it
 HP.motion.dragDismiss($('#sheet .sheetbox'),()=>{const sh=$('#sheet');return sh.animate({opacity:[1,0]},{duration:180,easing:'ease-out'}).finished.then(()=>{sh.hidden=true})});
 // swipe from the left edge to go back, on the pages that have a way back and no map of their own to drag
@@ -504,10 +577,32 @@ HP.motion.edgeBack(()=>{if(!$('#scr-detail').hidden)return $('#scr-detail');retu
 $('#sheet').addEventListener('click',async e=>{const sh=$('#sheet');if(e.target===sh){HP.motion.close(sh);return}const b=e.target.closest('[data-act]');if(!b)return;HP.motion.close(sh);
   const D=HP.viewer.current();if(!D)return;const act=b.dataset.act;
   if(act==='guide'){openGuide();return}
+  if(act==='strip'){stripAsk(D);return}
+  if(act==='plan'){sharePlan();return}
   if(act==='rename'){const v=await ask('Name of this hike',{input:D.name,ok:'Save'});if(v){D.name=v.slice(0,80);onPlanChange(D);await flushSave()}}
   else if(act==='gpx')exportGPX(D);
   else if(act==='forecast'){if(!navigator.onLine){HP.toast('No connection right now.');return}HP.viewer.updateForecast()}
-  else if(act==='delete'){if(await ask(`Delete “${D.name}” from this phone?`,{ok:'Delete',danger:true})){pending=null;clearTimeout(saveT);HP.viewer.close();viewId=null;cur='';await HP.db.remove(D.id);dropCovers(D.id);HP.toast('Hike deleted');replace('#/')}}});
+  else if(act==='delete'){if(await ask(`Delete “${D.name}” from this phone?`,{ok:'Delete',danger:true})){pending=null;clearTimeout(saveT);HP.viewer.close();viewId=null;cur='';if(HP.stripRun&&HP.stripRun.id===D.id)HP.stripRun.ac.abort();await HP.db.remove(D.id);dropCovers(D.id);HP.toast('Hike deleted');replace('#/')}}});
+/* ---------- leave your plan with someone (since 2.3): who, where, when, and when to raise the alarm ---------- */
+function planText(){const V=HP.viewer.state();if(!V)return null;const D=V.D,R=V.R,days=V.DAYS,n=days.length,clk=h=>HP.u.fmtClock(h);
+  const dayOn=k=>{const d=parseDay(D.date);d.setDate(d.getDate()+k);return isoDay(d)},fd=s=>fmtDate(s,{weekday:'short',day:'numeric',month:'short'});
+  const km=R.d[R.d.length-1],up=days.reduce((s,d)=>s+d.up,0),lat=R.lat[0].toFixed(5),lon=R.lon[0].toFixed(5);
+  const huts=D.huts||{},hutLine=name=>{const h=huts[name];return h&&(h.phone||h.web)?` (${[h.phone,h.web].filter(Boolean).join(', ')})`:''};
+  const L=[`My hike plan: ${D.name}`,`${fd(D.date)}${n>1?' to '+fd(dayOn(n-1)):''} · ${n} ${n>1?'days':'day'} · ${km.toFixed(1)} km · ${nf.format(Math.round(up/10)*10)} m up`,''];
+  days.forEach((d,k)=>{L.push(`Day ${d.n}, ${fd(dayOn(k))}: ${d.from} to ${d.to}, ${d.km} km. I set off at ${clk(V.CLK[d.i0])} and expect to arrive about ${clk(V.CLK[d.i1])}.`);
+    if(k<n-1)L.push(`Night ${d.n}: ${d.to}${hutLine(d.to)}`)});
+  const last=days[n-1],late=V.CLK[last.i1]+2,sos=(V.sos||[]).slice(0,3).map(([num,who])=>`${num} (${who.split(',')[0]})`).join(', ');
+  L.push('',`If you haven't heard from me by ${clk(Math.min(23.99,late))} on ${fd(dayOn(n-1))}, call the mountain rescue and give them this plan: ${sos||'112'}.`,
+    `Where I start: https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=14/${lat}/${lon}`,`The route is attached as a GPX file, which opens in most map apps.`);
+  return L.join('\n')}
+async function sharePlan(){const D=HP.viewer.current(),t=planText();if(!D||!t)return;const R=D.route;
+  const fname=(D.name.replace(/[\\/:*?"<>|]+/g,'').trim().replace(/\s+/g,'-')||'hike')+'.gpx',file=new File([HP.toGPX(D.name,R.lat,R.lon,R.e,[])],fname,{type:'application/gpx+xml'});
+  if(navigator.share){try{if(navigator.canShare&&navigator.canShare({files:[file],text:t}))await navigator.share({title:'My hike plan',text:t,files:[file]});else await navigator.share({title:'My hike plan',text:t});return}
+    catch(e){if(e.name==='AbortError')return}}
+  try{await navigator.clipboard.writeText(t);HP.download(fname,file);HP.toast('Your plan is copied: paste it in a message. The route file is in your downloads.',5000)}
+  catch(e){ask(`<p>Copy this and send it to someone at home:</p><textarea class="logtxt" readonly>${esc(t)}</textarea>`,{html:true,ok:'Done',cancel:false})}}
+HP.planText=planText;
+
 async function exportGPX(D){const R=D.route;
   const w=D.points.filter(p=>p.kind!=='high').map(p=>({lat:R.lat[p.i],lon:R.lon[p.i],name:p.name}));D.days.slice(0,-1).forEach(d=>{if(!D.points.some(p=>p.i===d.i1))w.push({lat:R.lat[d.i1],lon:R.lon[d.i1],name:`Night ${d.n}: ${d.to}`})});
   const gpx=HP.toGPX(D.name,R.lat,R.lon,R.e,w),fname=(D.name.replace(/[\\/:*?"<>|]+/g,'').trim().replace(/\s+/g,'-')||'hike')+'.gpx',file=new File([gpx],fname,{type:'application/gpx+xml'});

@@ -19,18 +19,18 @@ function open(){if(G)return true;const V=HP.viewer.state&&HP.viewer.state();if(!
   // walking hours from the start of the route, across the days, for your own pace
   const WA=new Float64Array(N);let base=0;for(const d of V.DAYS){for(let i=d.i0;i<=d.i1;i++)WA[i]=base+V.WALK[i];base+=V.WALK[d.i1]}
   const J=(V.T?V.T.junc:[]).filter(j=>j.key).sort((a,b)=>a.i-b.i);
-  G={V,R,N,X,Y,WA,J,kx,ky,lat0,lon0,k:-1,along:0,im:0,d:0,off:false,offN:0,backN:0,maxAlong:-1,follow:true,track:[],hist:[],fix:null,said:new Set(),err:null,heading:null,snd:sndOn(),sos:false};
+  G={V,R,N,X,Y,WA,J,kx,ky,lat0,lon0,k:-1,along:0,im:0,d:0,off:false,offN:0,backN:0,maxAlong:-1,follow:true,track:[],hist:[],fix:null,said:new Set(),err:null,heading:null,snd:sndOn(),sos:false,dim:false,lastTouch:Date.now()};
   const el=$('#guide');el.hidden=false;document.body.classList.add('guiding');
   try{localStorage.setItem('hp-guide',JSON.stringify({id:V.D.id,t:Date.now()}))}catch(e){}
   initMap();audioInit();keepAwake();startGPS();render();
   // the map's credits sit just above the panel
   G.ro=new ResizeObserver(()=>{$('#guide').style.setProperty('--gph',$('#gpanel').offsetHeight+'px')});G.ro.observe($('#gpanel'));
-  document.addEventListener('visibilitychange',onVis);G.tick=setInterval(()=>render(),15000);
+  document.addEventListener('visibilitychange',onVis);G.tick=setInterval(()=>{render();if(dimAuto()&&!G.dim&&!G.sos&&G.fix&&Date.now()-G.lastTouch>DIMMS)dimOn()},15000);
   return true}
-function close(){if(!G)return;const g=G;G=null;
+function close(){if(!G)return;if(G.dim)dimOff();const g=G;G=null;
   if(g.watch!=null)navigator.geolocation.clearWatch(g.watch);clearInterval(g.tick);document.removeEventListener('visibilitychange',onVis);
   if(g.lock)g.lock.release().catch(()=>{});if(g.ac)g.ac.close().catch(()=>{});if(g.compass)removeEventListener(g.compass,onOrient,true);
-  if(g.ro)g.ro.disconnect();if(g.map)g.map.remove();if(g.picURL)URL.revokeObjectURL(g.picURL);
+  if(g.ro)g.ro.disconnect();if(g.stripOff)try{g.stripOff()}catch(e){}if(g.map)g.map.remove();if(g.picURL)URL.revokeObjectURL(g.picURL);
   $('#guide').hidden=true;$('#gmap').innerHTML='';document.body.classList.remove('guiding');
   try{localStorage.removeItem('hp-guide')}catch(e){}}
 
@@ -44,6 +44,8 @@ function initMap(){const V=G.V,D=V.D,R=G.R,geo=HP.geo;
     map.createPane('pic').style.zIndex=150;
     const ov=L.imageOverlay(G.picURL,[[s,w],[n,e]],{pane:'pic',interactive:false,attribution:V.BLOBS.topo?(V.D.topoSrc==='swisstopo'?'Offline map © swisstopo':'Offline map © OpenStreetMap contributors, SRTM · style © OpenTopoMap (CC-BY-SA)'):'Sentinel-2 cloudless by EOX (Copernicus Sentinel data 2025)'}).addTo(map);
     ov.on('load',()=>{const im=ov.getElement();if(G&&im&&im.naturalWidth)G.picZ=D.z+Math.log2(im.naturalWidth/D.w)})}
+  // the map for no signal (HP.strip) lies between the picture and the live map: the live tiles cover it while they come
+  map.createPane('off').style.zIndex=175;addStrip();
   addTiles();
   for(const d of V.DAYS){const ll=[];for(let i=d.i0;i<=d.i1;i++)ll.push([R.lat[i],R.lon[i]]);
     L.polyline(ll,{color:'#0b0d0c',weight:10,opacity:.45,interactive:false}).addTo(map);L.polyline(ll,{color:d.color,weight:5.5,opacity:.95,interactive:false}).addTo(map)}
@@ -58,6 +60,38 @@ function initMap(){const V=G.V,D=V.D,R=G.R,geo=HP.geo;
   const day=todayDay(),d=V.DAYS[(day||1)-1],b=L.latLngBounds([]);for(let i=d.i0;i<=d.i1;i+=3)b.extend([R.lat[i],R.lon[i]]);map.fitBounds(b,{padding:[30,30]});
   map.on('dragstart',()=>{if(G&&G.follow){G.follow=false;render()}});
   addEventListener('online',addTiles)}
+/* ---------- the map for no signal (since 2.3) ---------- */
+document.addEventListener('hp-strip',e=>{if(!G||e.detail.id!==G.V.D.id)return;if(e.detail.f>=1&&!HP.stripRun)addStrip();render()});
+document.addEventListener('click',e=>{if(G&&e.target.id==='gsavebtn')HP.stripAsk(G.V.D)});
+// (drawn again when it is saved anew: what was drawn before goes first, with its credit)
+async function addStrip(){if(!G)return;const D=G.V.D,s=D.strip,map=G.map,ac=map.attributionControl;if(G.stripOff){G.stripOff();G.stripOff=null}if(!s)return;
+  const cr=(t,l,off)=>{if(ac)ac.addAttribution(t);G.stripOff=()=>{if(l)map.removeLayer(l);if(off)off();if(ac)ac.removeAttribution(t)}};
+  if(s.kind==='swiss'){cr('Offline map © swisstopo',HP.maps.stripLayer(map,D.id,'off'));return}
+  const V=await HP.db.blob(D.id+':vec').catch(()=>null);if(G&&G.map===map&&V&&V.ways&&!G.stripOff)cr('Paths © OpenStreetMap contributors',null,drawVec(V))}
+// the paths, roads, streams, lakes, huts and signposts saved from OpenStreetMap, drawn sharply at any zoom (from zoom 13)
+const VST={g:{color:'#9cc7e6',weight:1,fillColor:'#eef6fb',fillOpacity:.85},L:{color:'#6aa9dc',weight:1,fillColor:'#a9d3f2',fillOpacity:.95},
+  w:{color:'#4b8fd6',weight:1.3},W:{color:'#4b8fd6',weight:2.6},c:{color:'#5d534b',weight:1.6,dashArray:'1 2'},
+  R:{color:'#f2c14e',weight:3.4,casing:'#8d7a50'},r:{color:'#ffffff',weight:2.4,casing:'#9b9b9b'},t:{color:'#8a5a2b',weight:1.8,dashArray:'6 3'},
+  p:{color:'#b3261e',weight:1.9,dashArray:'4 3'},f:{color:'#b3261e',weight:2,dashArray:'1 3'}};
+const VORD='gLwWcRrtpf',PICON={hut:['#d6332b','■'],shelter:['#e07b1f','■'],camp:['#2f8f4e','▲'],water:['#2a7de1','●'],peak:['#222','▲'],pass:['#222','◆'],post:['#222','•']};
+function drawVec(V){const map=G.map,rd=L.canvas({pane:'off',padding:.3}),g=L.layerGroup(),lab=L.layerGroup(),lab16=L.layerGroup();
+  const ws=V.ways.slice().sort((a,b)=>VORD.indexOf(a.k)-VORD.indexOf(b.k)),ll=w=>{const o=[];for(let i=0;i<w.c.length;i+=2)o.push([w.c[i]/1e6,w.c[i+1]/1e6]);return o};
+  for(const w of ws){const st=VST[w.k];if(!st)continue;const p=ll(w);
+    if(w.k==='g'||w.k==='L')L.polygon(p,{renderer:rd,interactive:false,...st}).addTo(g);
+    else{if(st.casing)L.polyline(p,{renderer:rd,interactive:false,color:st.casing,weight:st.weight+2,lineCap:'round'}).addTo(g);L.polyline(p,{renderer:rd,interactive:false,lineCap:'round',...st}).addTo(g)}}
+  const seen=new Map(),dup=(n,la,lo)=>{const o=seen.get(n)||[];for(const[a,b]of o)if(Math.hypot((la-a)*111,(lo-b)*111*Math.cos(la*Math.PI/180))<.6)return true;o.push([la,lo]);seen.set(n,o);return false};
+  for(const q of V.pois.slice().sort((a,b)=>(a.k==='post')-(b.k==='post'))){const[c,ch]=PICON[q.k]||['#222','•'];
+    const m=L.marker([q.la,q.lo],{pane:'off',interactive:false,keyboard:false,icon:L.divIcon({className:'vpoi',html:`<i style="color:${c}">${ch}</i>`,iconSize:[14,14],iconAnchor:[7,7]})}).addTo(g);
+    const t=q.n&&q.k!=='water'?`${esc(q.n)}${q.e&&(q.k==='peak'||q.k==='pass')?` ${Math.round(q.e)}`:''}`:'';
+    // one label for a name nearby: a village and its signpost or station often share it
+    if(t&&!dup(q.n,q.la,q.lo))(q.k==='post'?lab16:lab).addLayer(L.tooltip({permanent:true,direction:'right',offset:[6,0],className:'vtip',pane:'off'}).setLatLng([q.la,q.lo]).setContent(t))}
+  // close up, the saved picture is only a soft background: it fades, so the sharp lines drawn over it stand out
+  const pic=map.getPane('pic'),bg=document.getElementById('gmap');
+  const show=()=>{const z=map.getZoom(),on=z>=13;if(on!==map.hasLayer(g)){on?g.addTo(map):map.removeLayer(g)}
+    if(pic)pic.style.opacity=z>=16?.32:z>=15?.5:z>=14?.8:1;bg.classList.toggle('vecbg',z>=14);
+    if((z>=14)!==map.hasLayer(lab)){z>=14?lab.addTo(map):map.removeLayer(lab)}if((z>=16)!==map.hasLayer(lab16)){z>=16?lab16.addTo(map):map.removeLayer(lab16)}};
+  map.on('zoomend',show);show();
+  return()=>{map.off('zoomend',show);for(const l of[g,lab,lab16])map.removeLayer(l);if(pic)pic.style.opacity='';bg.classList.remove('vecbg')}}
 // sharper map tiles when there is a connection: the Swiss national map in Switzerland, Esri's Outdoor map elsewhere
 function addTiles(){if(!G||G.tiles||!navigator.onLine)return;G.tiles=HP.maps.leaflet(G.map)}
 
@@ -97,11 +131,24 @@ function nextJ(){const a=G.along+.004;for(const j of G.J)if(G.R.d[j.i]>a)return 
 function todayDay(){const V=G.V,d0=HP.u.parseDay(V.D.date),t=HP.u.parseDay(HP.u.isoDay(new Date())),n=Math.round((t-d0)/864e5)+1;return n>=1&&n<=V.DAYS.length?n:null}
 function nowH(){const lon=G.R.lon[G.im];return((Date.now()/36e5+HP.tzOffset(G.V.D.tz,new Date(),lon))%24+24)%24}
 
+/* ---------- battery saver (since 2.3): a black screen that keeps following you ---------- */
+// Black pixels are dark on most phone screens, which saves a lot over a long day with the screen kept on. It comes by itself after
+// three minutes without a touch (unless turned off), and goes for a touch or for any alarm: a turn, the wrong way, off the route.
+const DIMMS=3*60e3,dimAuto=()=>{try{return localStorage.getItem('hp-dim')!=='0'}catch(e){return true}};
+function dimOn(){if(!G||G.dim)return;G.dim=true;$('#gdim').hidden=false;$('#gmap').style.visibility='hidden';renderDim();try{$('#gdim').focus({preventScroll:true})}catch(e){}}
+function dimOff(){if(!G)return;G.lastTouch=Date.now();if(!G.dim)return;G.dim=false;$('#gdim').hidden=true;$('#gmap').style.visibility='';if(G.map)G.map.invalidateSize();render()}
+function renderDim(){if(!G||!G.dim)return;const b=$('#gtop b'),k=$('#gpanel .gnow li');
+  $('#gdimtop').textContent=b?b.textContent:'Following you';$('#gdimsub').textContent=k?`${k.querySelector('b').textContent.replace(/\s+/g,' ')} ${k.querySelector('span').textContent}`:'';
+  $('#gdimauto').textContent=dimAuto()?'Turn off dimming by itself':'Dim by itself after 3 minutes';
+  // a little shift each minute, so nothing stays lit in one place for hours
+  const m=Math.floor(Date.now()/6e4);$('#gdim .gdt').style.transform=`translate(${(m%5)*8-16}px,${(m%7)*10-30}px)`}
+document.addEventListener('pointerdown',()=>{if(G)G.lastTouch=Date.now()},true);
+
 /* ---------- sound, the screen, the compass ---------- */
 function audioInit(){try{const A=window.AudioContext||window.webkitAudioContext;if(A){G.ac=new A();if(G.ac.state==='suspended')G.ac.resume().catch(()=>{})}}catch(e){}}
 function tone(seq){const ac=G&&G.ac;if(!ac||!G.snd)return;if(ac.state==='suspended')ac.resume().catch(()=>{});let t=ac.currentTime+.03;
   for(const[f,d]of seq){const o=ac.createOscillator(),g=ac.createGain();o.type='triangle';o.frequency.value=f;g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.5,t+.02);g.gain.exponentialRampToValueAtTime(.001,t+d);o.connect(g);g.connect(ac.destination);o.start(t);o.stop(t+d+.05);t+=d+.07}}
-function alarm(k){if(!G)return;G.lastAlarm=k;const vib=p=>{try{if(G.snd&&navigator.vibrate)navigator.vibrate(p)}catch(e){}};
+function alarm(k){if(!G)return;G.lastAlarm=k;dimOff();const vib=p=>{try{if(G.snd&&navigator.vibrate)navigator.vibrate(p)}catch(e){}};
   if(k==='off'){tone([[880,.22],[622,.3],[880,.22],[622,.4]]);vib([300,120,300,120,300])}
   else if(k==='back')tone([[660,.14],[990,.24]]);
   else if(k==='turn'){tone([[784,.16],[1047,.22]]);vib(120)}}
@@ -152,8 +199,11 @@ function render(first){if(!G)return;const V=G.V,R=G.R,f=G.fix,cc=V.cc&&V.cc[0];
     if(A.place)L.push(`<li>Next: ${esc(A.place.name)} · ${fmtM((R.d[A.place.i]-G.along)*1000)} · ${fmtT(A.tPlace)}</li>`);
     L.push(`<li class="mute">Day ${A.d.n}${V.DAYS.length>1?` of ${V.DAYS.length}`:''} · km ${A.km.toFixed(1)} of ${A.len.toFixed(1)} · to ${to}</li>`);
     P.querySelector('.glines').innerHTML=L.join('');P.querySelector('.gbar i').style.width=`${Math.max(0,Math.min(100,A.km/A.len*100)).toFixed(1)}%`}
+  // the map for no signal: offered while there is a connection, until it is saved
+  const gs=$('#gsave'),run=HP.stripRun&&HP.stripRun.id===V.D.id;gs.hidden=!run&&(!!V.D.strip||!navigator.onLine);
+  if(!gs.hidden)gs.innerHTML=run?`Saving the map for no signal… ${Math.round((HP.stripRun.f||0)*100)}%`:'No signal ahead? <button type="button" class="lnk" id="gsavebtn">Save the map for no signal</button>';
   $('#gstat').innerHTML=[f?`<span class="${f.acc>50?'bad':''}">${f.acc>50?'Weak GPS':'GPS'} ±${Math.round(f.acc)} m</span>`:'<span>GPS: waiting</span>',G.lockOn?'<span>screen stays on</span>':'wakeLock'in navigator?'<span class="bad">screen may turn off</span>':'<span>keep the screen on in your phone’s settings</span>',navigator.onLine?'':'<span>offline map</span>'].filter(Boolean).join(' · ');
-  if(G.sos)renderSOS()}
+  if(G.sos)renderSOS();renderDim()}
 // the arrows turn with the phone when the compass is on; without it they point on the map, north up
 function renderArrows(){if(!G)return;const hd=G.heading!=null?G.heading:null,a=$('#gtop .garr');
   if(a)a.style.transform=`rotate(${((a.classList.contains('back')?G.fwd:G.toRoute)-(hd||0)).toFixed(0)}deg)`;
@@ -167,7 +217,12 @@ function share(){if(!G||!G.fix){HP.toast('Your position is not known yet.');retu
   if(navigator.share)navigator.share({title:'My position',text:t}).catch(()=>{});
   else if(navigator.clipboard)navigator.clipboard.writeText(t).then(()=>HP.toast('Position copied: paste it into a message.'),()=>HP.toast(t));else HP.toast(t)}
 // the buttons
-$('#guide').addEventListener('click',e=>{if(!G)return;const b=e.target.closest('button');if(!b)return;
+$('#guide').addEventListener('click',e=>{if(!G)return;
+  // the black screen: a tap wakes it; its one link switches dimming by itself on or off
+  if(e.target.id==='gdimauto'){try{localStorage.setItem('hp-dim',dimAuto()?'0':'1')}catch(x){}HP.toast(dimAuto()?'The screen goes dark by itself after 3 minutes.':'The screen stays lit until you choose the battery saver.');dimOff();return}
+  if(e.target.closest('#gdim')){dimOff();return}
+  const b=e.target.closest('button');if(!b)return;
+  if(b.id==='gdimbtn'){dimOn();return}
   if(b.id==='gfollow'){G.follow=true;if(G.fix)G.map.setView([G.fix.lat,G.fix.lon],Math.max(G.map.getZoom(),15));render()}
   else if(b.id==='gcomp')compassOn();
   else if(b.id==='gsnd'){G.snd=!G.snd;try{localStorage.setItem('hp-guide-snd',G.snd?'1':'0')}catch(e){}if(G.snd)tone([[784,.12]]);render()}
@@ -175,7 +230,8 @@ $('#guide').addEventListener('click',e=>{if(!G)return;const b=e.target.closest('
   else if(b.id==='gsosx'){G.sos=false;HP.motion.close($('#gsosbox'))}
   else if(b.id==='gshare'||b.id==='gshare2')share()
   else if(b.id==='gexit')history.back()});
-HP.guide={open,close,active:()=>!!G,
+$('#gdim').addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();dimOff()}});
+HP.guide={open,close,active:()=>!!G,map:()=>G&&G.map,dim:on=>{if(on===true)dimOn();else if(on===false)dimOff();return!!(G&&G.dim)},idle:ms=>{if(G)G.lastTouch=Date.now()-ms},
   // for tests: a position as if from the GPS, and what the guide shows
   fix:(lat,lon,acc=8,t)=>onFix({lat,lon,acc,alt:null,hd:null,sp:null,t:t||Date.now()}),
   state:()=>G&&{along:+G.along.toFixed(3),d:Math.round(G.d),off:G.off,back:G.backN>=2,im:G.im,pace:G.pace,lock:!!G.lockOn,follow:G.follow,alarm:G.lastAlarm||null,top:$('#gtop').innerText,lines:$('#gpanel .glines').innerText,next:(nextJ()||{}).i??null}};

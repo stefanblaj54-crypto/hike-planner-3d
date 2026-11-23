@@ -5,7 +5,7 @@
    The result is kept with the hike (D.trail), so it works offline. */
 (function(){
 const {geo}=HP;
-HP.TRAIL_V=1;
+HP.TRAIL_V=2;   // 2 (2.3): the official Swiss hiking trails
 const SAC={hiking:1,mountain_hiking:2,demanding_mountain_hiking:3,alpine_hiking:4,demanding_alpine_hiking:5,difficult_alpine_hiking:5};   // the app's grades stop at 5
 const VIS={excellent:1,good:1,intermediate:2,bad:3,horrible:4,no:5};
 HP.VISN=['','clear on the ground','visible in places','hard to see','barely visible','no visible path'];
@@ -23,13 +23,37 @@ HP.trailQuery=R=>{const B=boxes(R),U=f=>B.map(f).join('');
     `(${U(b=>`nwr["natural"~"^(cliff|glacier)$"](${b});nwr["hazard"](${b});node["ford"](${b});node["information"="guidepost"](${b});node["emergency"~"^(mountain_rescue|phone)$"](${b});`)});out body geom qt;`};
 async function overpass(q,signal){let err;
   for(const[host,ms]of SERVERS){if(signal&&signal.aborted)throw Error('Cancelled');
-    try{const j=await HP.fetchJSON(host,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'}},ms);if(j&&j.elements)return j.elements;err=Error('no data')}catch(e){err=e}}
+    try{const j=await HP.fetchJSON(host,{method:'POST',body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'},signal},ms);if(j&&j.elements)return j.elements;err=Error('no data')}
+    catch(e){if(signal&&signal.aborted)throw e;err=e}}
   throw err||Error('Trail data unavailable')}
+HP.overpass=overpass;
 // official closures and detours of Swiss hiking trails (Federal Roads Office, through swisstopo)
 const inCH=b=>b.n>45.8&&b.s<47.85&&b.e>5.95&&b.w<10.5;
 async function closuresCH(b){if(!inCH(b))return[];const ext=`${b.w},${b.s},${b.e},${b.n}`;
   const j=await HP.fetchJSON(`https://api3.geo.admin.ch/rest/services/api/MapServer/identify?geometryType=esriGeometryEnvelope&geometry=${ext}&sr=4326&imageDisplay=600,600,96&mapExtent=${ext}&tolerance=0&layers=all:ch.astra.wanderland-sperrungen_umleitungen&returnGeometry=true&geometryFormat=geojson&lang=en`,{},20000);
   return(j.results||[]).map(r=>({a:r.properties||r.attributes||{},g:r.geometry})).filter(r=>r.g)}
+// The official Swiss hiking trails along the route (swisstopo's swissTLM3D, through geo.admin.ch; since 2.3): which parts are on the
+// signed network, and which official trails are alpine (white-blue-white). Asked for in 2 km pieces of the route, three at a time.
+async function officialCH(R,signal){const m=R.lat.length,pieces=[];let a=0;while(a<m-1){let b=a;while(b<m-1&&R.d[b]-R.d[a]<2)b++;pieces.push([a,b]);a=b}
+  const feats=new Map();let failed=0;
+  const one=async([a,b])=>{const st=Math.max(1,Math.floor((b-a)/60)),P=[];for(let i=a;i<b;i+=st)P.push([+R.lon[i].toFixed(6),+R.lat[i].toFixed(6)]);P.push([+R.lon[b].toFixed(6),+R.lat[b].toFixed(6)]);
+    let w=180,e=-180,s=90,n=-90;for(const[x,y]of P){w=Math.min(w,x);e=Math.max(e,x);s=Math.min(s,y);n=Math.max(n,y)}const ext=`${(w-.005).toFixed(5)},${(s-.005).toFixed(5)},${(e+.005).toFixed(5)},${(n+.005).toFixed(5)}`;
+    try{const j=await HP.fetchJSON(`https://api3.geo.admin.ch/rest/services/api/MapServer/identify?geometryType=esriGeometryPolyline&geometry=${encodeURIComponent(JSON.stringify({paths:[P],spatialReference:{wkid:4326}}))}&sr=4326&layers=all:ch.swisstopo.swisstlm3d-wanderwege&tolerance=6&mapExtent=${ext}&imageDisplay=1000,1000,96&returnGeometry=true&geometryFormat=geojson&lang=en`,{signal},25000);
+      for(const r of j.results||[])if(r.geometry)feats.set(r.featureId,{alp:(r.properties||{}).hikingtype==='Alpinwanderweg',g:r.geometry})}catch(e){if(signal&&signal.aborted)throw e;failed++}};
+  for(let k=0;k<pieces.length;k+=3)await Promise.all(pieces.slice(k,k+3).map(one));
+  if(failed>pieces.length/3||!feats.size)return null;
+  // each route point: on an official alpine trail (2) when that is clearly the nearest, on an official trail (1), or not (0)
+  const kx=Math.cos(R.lat[0]*Math.PI/180)*111320,ky=110540,X=lo=>lo*kx,Y=la=>la*ky,GS=40,grid=new Map(),segs=[];
+  for(const f of feats.values()){const lines=f.g.type==='LineString'?[f.g.coordinates]:f.g.type==='MultiLineString'?f.g.coordinates:[];
+    for(const L of lines)for(let k=0;k<L.length-1;k++){const s={x1:X(L[k][0]),y1:Y(L[k][1]),x2:X(L[k+1][0]),y2:Y(L[k+1][1]),alp:f.alp},id=segs.push(s)-1;
+      for(let gx=Math.floor(Math.min(s.x1,s.x2)/GS);gx<=Math.floor(Math.max(s.x1,s.x2)/GS);gx++)for(let gy=Math.floor(Math.min(s.y1,s.y2)/GS);gy<=Math.floor(Math.max(s.y1,s.y2)/GS);gy++){const k2=gx+','+gy;let c=grid.get(k2);if(!c)grid.set(k2,c=[]);c.push(id)}}}
+  const dseg=(px,py,s)=>{const dx=s.x2-s.x1,dy=s.y2-s.y1,l=dx*dx+dy*dy,t=l?Math.max(0,Math.min(1,((px-s.x1)*dx+(py-s.y1)*dy)/l)):0;return Math.hypot(px-s.x1-t*dx,py-s.y1-t*dy)};
+  const ofc=new Uint8Array(m);
+  for(let i=0;i<m;i++){const px=X(R.lon[i]),py=Y(R.lat[i]),cx=Math.floor(px/GS),cy=Math.floor(py/GS);let dn=1e9,da=1e9;
+    for(let a2=-1;a2<=1;a2++)for(let b2=-1;b2<=1;b2++){const c=grid.get((cx+a2)+','+(cy+b2));if(c)for(const id of c){const s=segs[id],d=dseg(px,py,s);if(s.alp){if(d<da)da=d}else if(d<dn)dn=d}}
+    ofc[i]=da<=15&&da<dn-5?2:Math.min(dn,da)<=20?1:0}
+  for(let i=1;i<m-1;i++)if(ofc[i-1]===ofc[i+1]&&ofc[i]!==ofc[i-1])ofc[i]=ofc[i-1];   // one-point flickers
+  return ofc}
 async function country(lat,lon){try{const j=await HP.fetchJSON(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&zoom=3&accept-language=en`,{},12000);return(j.address&&j.address.country_code||'').toLowerCase()}catch(e){return''}}
 
 /* ---------- waymarks: OSM's osmc:symbol, drawn and put into words ---------- */
@@ -160,7 +184,7 @@ HP.trailCheck=async function(D,signal){const R=D.route,m=R.lat.length;let la0=90
   const b={s:la0,n:la1,w:lo0,e:lo1};
   // the countries at the start and the end, one after the other (Nominatim asks for one request a second); the end only when it is far from the start
   const countries=async()=>{const a=await country(R.lat[0],R.lon[0]);if(HP.geo.hav(R.lat[0],R.lon[0],R.lat[m-1],R.lon[m-1])<20000)return[a,a];await new Promise(r=>setTimeout(r,1100));return[a,await country(R.lat[m-1],R.lon[m-1])]};
-  const [els,cl,[cc0,cc1]]=await Promise.all([overpass(HP.trailQuery(R),signal),closuresCH(b).catch(()=>null),countries()]);
-  const T=analyse(D,els,cl||[]);T.cc=[...new Set([cc0,cc1].filter(Boolean))];T.closuresOk=cl!=null||!inCH(b);return T};
+  const [els,cl,[cc0,cc1],ofc]=await Promise.all([overpass(HP.trailQuery(R),signal),closuresCH(b).catch(()=>null),countries(),inCH(b)?officialCH(R,signal).catch(e=>{if(signal&&signal.aborted)throw e;return null}):null]);
+  const T=analyse(D,els,cl||[]);T.cc=[...new Set([cc0,cc1].filter(Boolean))];T.closuresOk=cl!=null||!inCH(b);if(ofc)T.ofc=ofc;return T};
 HP.trailAnalyse=analyse;   // for tests
 })();
