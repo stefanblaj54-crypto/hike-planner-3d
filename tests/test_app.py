@@ -11,6 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(HERE, "shots") + "/"; os.makedirs(SHOTS, exist_ok=True)
 GPX = os.path.join(HERE, "baerentrek.gpx"); PHOTO = os.path.join(HERE, "test_photo.jpg")
 ESRI_JPG = open(os.path.join(HERE, "esri_mock.jpg"), "rb").read()
+ESRI_PNG = open(os.path.join(HERE, "esri_outdoor_mock.png"), "rb").read()
 CHROME = os.environ.get("CHROME") or ("/usr/bin/google-chrome" if os.path.exists("/usr/bin/google-chrome") else None)  # None: Playwright's own Chromium
 HDR = {"access-control-allow-origin": "*"}
 
@@ -37,6 +38,12 @@ async def mock(ctx, log):
         if "f=json" in r.request.url: await r.fulfill(status=200, content_type="application/json", body='{"copyrightText":"Source: Esri, Vantor, GeoEye, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community"}', headers=HDR)
         else: await r.fulfill(status=200, content_type="image/jpeg", body=ESRI_JPG, headers=HDR)
     await ctx.route("https://ibasemaps-api.arcgis.com/**", esri)
+    # Esri's Outdoor map (512-pixel tiles from the Static Basemap Tiles service): a made-up tile too
+    async def outdoor(r):
+        log.append("outdoor")
+        if os.environ.get("ESRI") == "live": await r.continue_(); return
+        await r.fulfill(status=200, content_type="image/png", body=ESRI_PNG, headers=HDR)
+    await ctx.route("https://static-map-tiles-api.arcgis.com/**", outdoor)
     # Swiss trail closures (none, unless a test sets DYN["closures"]) and the country for the emergency numbers
     async def closures(r):
         await r.fulfill(status=200, content_type="application/json", body=json.dumps({"results": DYN.get("closures", [])}), headers=HDR)

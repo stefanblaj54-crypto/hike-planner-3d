@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='2.1';
+const VERSION='2.2';
 const SCREENS=['home','new','build','view','custom','about','inv','detail'];
 let cur='',viewId=null,building=null,installEvt=null,pendingDet=null,pendingLook=null,pendingShow=null,pendingGuide=false,viewScroll=0;
 
@@ -285,7 +285,8 @@ function refreshNewMap(){if(typeof L==='undefined'){$('#pmap').innerHTML='<p cla
   if(!map)initMap();requestAnimationFrame(()=>map.invalidateSize())}
 function initMap(){let v={center:[46.6,15],zoom:5};try{const s=JSON.parse(localStorage.getItem('hp-view')||'null');if(s&&s.center)v=s}catch(e){}
   map=L.map('pmap',{zoomControl:false,doubleClickZoom:false,tapTolerance:18}).setView(v.center,v.zoom);if(!coarse)L.control.zoom({position:'bottomright'}).addTo(map);
-  L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{subdomains:'abc',maxZoom:17,attribution:'© OpenStreetMap contributors, SRTM · map style © OpenTopoMap (CC-BY-SA)'}).addTo(map);map.attributionControl.setPrefix(false);
+  // the Swiss national map in Switzerland, Esri's Outdoor map elsewhere (OpenTopoMap if Esri can't answer)
+  map.attributionControl.setPrefix(false);HP.maps.leaflet(map);
   lineLayer=L.layerGroup().addTo(map);wpLayer=L.layerGroup().addTo(map);locLayer=L.layerGroup().addTo(map);
   map.on('click',e=>{if(NEW.mode!=='draw')return;pushHist();NEW.pts.push({lat:e.latlng.lat,lon:e.latlng.lng});changed()});
   map.on('moveend',()=>{const c=map.getCenter();try{localStorage.setItem('hp-view',JSON.stringify({center:[+c.lat.toFixed(5),+c.lng.toFixed(5)],zoom:map.getZoom()}))}catch(e){}});

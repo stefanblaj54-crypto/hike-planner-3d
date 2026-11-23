@@ -121,3 +121,51 @@ HP.inv={
 
 HP.toast=(msg,ms=3200)=>{const t=$('#toast');if(!t)return;const M=HP.motion;t.textContent=msg;if(M)M.open(t);else t.hidden=false;clearTimeout(t._h);t._h=setTimeout(()=>{if(M)M.close(t);else t.hidden=true},ms)};
 })();
+
+/* ---------- topographic maps: the Swiss national map inside Switzerland, Esri's Outdoor map elsewhere, OpenTopoMap when Esri can't answer ---------- */
+// The owner's ArcGIS Location Platform key (free tier, pay-as-you-go off: past the allowance the service answers with an error, never a bill).
+// It allows basemaps only: World Imagery close-ups in the 3D view, and the Outdoor map from the Static Basemap Tiles service.
+HP.ESRI_KEY='AAPTaeWnjK3eBR4wrcT5-LAgFWg..DondMwmab5TQtawxEoLPSVJARXpeBr7jV05xOwmRQFh9BdRE0beQz6gPqNhHBy_QTIu0NU31-40eG8xm_exWbu9MT3VHPuHW67DvPqdW_1sN76hm5XdWjTNlnMTKJKco-IqTstbsx9dmoOztq5hWkmd05ip9_IT01T3D6mWeflgz2tKMVVt9kFzb1NklXOTMGIL6Z-dCO27fhpqBtGcTFAKBkTnjpNoZg3iXW63iCOem4CcX6DPwBN1tU6mJnwtlTgQzAT1_OQqgxG7f';
+(function(){
+// Switzerland's border, simplified (OpenStreetMap through Nominatim, about 500 m), as lon,lat pairs; Liechtenstein is a box
+const CH=[5.956,46.132,5.994,46.145,6.035,46.134,6.052,46.151,6.136,46.142,6.222,46.201,6.295,46.225,6.310,46.256,6.260,46.252,6.238,46.278,6.249,46.302,6.220,46.312,6.253,46.360,6.335,46.404,6.426,46.416,6.519,46.456,6.682,46.454,6.821,46.427,6.806,46.379,6.771,46.354,6.865,46.280,6.804,46.205,6.813,46.182,6.792,46.163,6.797,46.139,6.900,46.124,6.882,46.095,6.892,46.074,6.872,46.051,6.891,46.043,6.937,46.064,6.985,46.005,7.011,45.997,7.024,45.979,7.008,45.969,7.037,45.955,7.044,45.923,7.101,45.859,7.154,45.879,7.196,45.860,7.216,45.889,7.257,45.888,7.294,45.922,7.386,45.897,7.475,45.936,7.471,45.947,7.499,45.962,7.543,45.957,7.550,45.987,7.579,45.986,7.589,45.971,7.664,45.976,7.710,45.948,7.720,45.924,7.748,45.941,7.800,45.917,7.864,45.917,7.877,45.927,7.877,45.974,7.909,45.997,7.989,45.996,8.012,46.012,8.012,46.031,8.035,46.044,8.022,46.069,8.035,46.101,8.108,46.112,8.115,46.130,8.155,46.148,8.166,46.182,8.139,46.226,8.083,46.257,8.086,46.267,8.138,46.302,8.199,46.302,8.224,46.334,8.263,46.346,8.264,46.364,8.313,46.377,8.316,46.399,8.289,46.408,8.307,46.426,8.446,46.464,8.466,46.444,8.457,46.423,8.471,46.396,8.465,46.334,8.428,46.298,8.456,46.264,8.445,46.249,8.532,46.218,8.574,46.164,8.603,46.155,8.593,46.143,8.612,46.122,8.648,46.123,8.714,46.097,8.742,46.122,8.760,46.102,8.806,46.101,8.852,46.076,8.855,46.062,8.786,45.989,8.831,45.988,8.894,45.959,8.893,45.931,8.945,45.867,8.912,45.830,8.956,45.843,9.017,45.818,9.089,45.901,9.019,45.928,9.014,45.961,8.989,45.970,9.028,45.994,9.010,46.037,9.078,46.065,9.090,46.087,9.073,46.118,9.183,46.170,9.221,46.229,9.248,46.234,9.250,46.267,9.299,46.328,9.296,46.356,9.276,46.368,9.280,46.414,9.248,46.433,9.247,46.447,9.278,46.462,9.282,46.496,9.364,46.509,9.376,46.485,9.412,46.467,9.464,46.509,9.461,46.485,9.449,46.484,9.466,46.470,9.461,46.376,9.496,46.364,9.550,46.302,9.635,46.286,9.677,46.303,9.710,46.292,9.737,46.351,9.777,46.335,9.907,46.381,9.925,46.366,9.958,46.379,9.996,46.351,9.980,46.323,10.000,46.313,9.996,46.285,10.056,46.266,10.061,46.248,10.044,46.230,10.070,46.217,10.132,46.225,10.177,46.258,10.106,46.342,10.129,46.361,10.128,46.378,10.162,46.388,10.167,46.408,10.143,46.428,10.080,46.421,10.042,46.443,10.054,46.465,10.044,46.540,10.101,46.583,10.102,46.611,10.193,46.626,10.215,46.617,10.239,46.635,10.259,46.610,10.246,46.575,10.287,46.570,10.296,46.550,10.418,46.551,10.453,46.531,10.471,46.543,10.492,46.615,10.446,46.641,10.402,46.637,10.382,46.684,10.416,46.709,10.401,46.734,10.443,46.754,10.423,46.788,10.458,46.816,10.472,46.849,10.465,46.884,10.489,46.938,10.426,46.957,10.427,46.976,10.385,47.000,10.347,46.990,10.328,46.954,10.309,46.950,10.316,46.925,10.241,46.931,10.226,46.896,10.233,46.866,10.105,46.841,10.087,46.861,10.051,46.864,10.018,46.902,9.876,46.935,9.871,46.963,9.892,46.990,9.871,47.010,9.876,47.021,9.836,47.013,9.682,47.062,9.559,47.048,9.540,47.065,9.476,47.052,9.472,47.065,9.519,47.097,9.486,47.181,9.531,47.271,9.588,47.317,9.606,47.352,9.674,47.384,9.644,47.434,9.659,47.452,9.595,47.463,9.562,47.496,9.559,47.542,9.496,47.551,9.395,47.620,9.257,47.659,9.176,47.654,9.024,47.687,8.894,47.648,8.851,47.681,8.852,47.698,8.873,47.704,8.819,47.713,8.807,47.738,8.770,47.718,8.769,47.707,8.810,47.693,8.788,47.676,8.728,47.693,8.736,47.716,8.711,47.730,8.741,47.748,8.727,47.762,8.689,47.758,8.681,47.787,8.657,47.800,8.653,47.773,8.632,47.758,8.619,47.798,8.568,47.808,8.562,47.793,8.577,47.782,8.484,47.771,8.451,47.740,8.455,47.722,8.405,47.698,8.421,47.684,8.406,47.674,8.466,47.657,8.474,47.638,8.476,47.650,8.532,47.646,8.527,47.660,8.561,47.670,8.607,47.672,8.629,47.649,8.596,47.643,8.605,47.614,8.583,47.596,8.562,47.600,8.575,47.612,8.558,47.624,8.516,47.634,8.508,47.618,8.457,47.602,8.467,47.584,8.495,47.581,8.464,47.572,8.330,47.571,8.292,47.609,8.227,47.605,8.206,47.621,8.110,47.583,8.089,47.558,7.960,47.558,7.944,47.544,7.912,47.551,7.892,47.587,7.823,47.588,7.796,47.557,7.693,47.532,7.634,47.561,7.686,47.566,7.672,47.587,7.694,47.601,7.646,47.597,7.619,47.577,7.589,47.590,7.585,47.576,7.499,47.540,7.531,47.528,7.522,47.514,7.498,47.521,7.510,47.506,7.502,47.491,7.472,47.480,7.433,47.497,7.421,47.480,7.456,47.471,7.403,47.435,7.330,47.442,7.247,47.420,7.233,47.439,7.170,47.443,7.201,47.494,6.983,47.495,7.002,47.454,6.940,47.433,6.938,47.406,6.913,47.405,6.879,47.353,7.016,47.373,7.050,47.361,7.057,47.334,7.010,47.325,7.016,47.313,6.996,47.296,6.941,47.287,6.956,47.243,6.841,47.171,6.858,47.165,6.850,47.156,6.703,47.082,6.692,47.067,6.719,47.051,6.618,46.992,6.496,46.974,6.433,46.929,6.465,46.890,6.460,46.851,6.431,46.812,6.458,46.789,6.452,46.774,6.282,46.691,6.110,46.576,6.157,46.545,6.073,46.465,6.086,46.444,6.064,46.416,6.170,46.366,6.102,46.285,6.124,46.251,5.975,46.215,5.964,46.197,5.995,46.182];
+const inPoly=(lon,lat)=>{let c=false;for(let i=0,n=CH.length/2,j=n-1;i<n;j=i++){const x1=CH[2*i],y1=CH[2*i+1],x2=CH[2*j],y2=CH[2*j+1];if((y1>lat)!==(y2>lat)&&lon<(x2-x1)*(lat-y1)/(y2-y1)+x1)c=!c}return c};
+const inCH=(lat,lon)=>lat>47.04&&lat<47.28&&lon>9.47&&lon<9.64||lat>45.8&&lat<47.81&&lon>5.95&&lon<10.5&&inPoly(lon,lat);
+const OUTDOOR='https://static-map-tiles-api.arcgis.com/arcgis/rest/services/static-basemap-tiles-service/v1/arcgis/outdoor/static/tile';
+const T1='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+HP.maps={inCH,
+  // a box wholly inside Switzerland or Liechtenstein (its corners, the middles of its sides and its centre): there the Swiss map
+  // has its full detail (outside it is blank at close range)
+  boxCH:(s,w,n,e)=>{const a=(s+n)/2,o=(w+e)/2;return inCH(s,w)&&inCH(s,e)&&inCH(n,w)&&inCH(n,e)&&inCH(a,o)&&inCH(s,o)&&inCH(n,o)&&inCH(a,w)&&inCH(a,e)},
+  swiss:(z,x,y)=>`https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/${z}/${x}/${y}.jpeg`,
+  // 512-pixel tiles: level z covers the area of a 256-pixel tile at z, with the detail of z+1
+  outdoor:(z,x,y)=>`${OUTDOOR}/${z}/${y}/${x}?token=${HP.ESRI_KEY}`,
+  otm:(z,x,y)=>`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${z}/${x}/${y}.png`,
+  CREDIT:{swiss:'Map © swisstopo',outdoor:'Powered by Esri · Esri, TomTom, Garmin, FAO, NOAA, USGS, © OpenStreetMap contributors, and the GIS User Community',otm:'Map © OpenStreetMap contributors, SRTM · style © OpenTopoMap (CC-BY-SA)'},
+  // Esri's refusals are counted across the app (the 3D view, the planning map, the live guide): three in a row (an expired key,
+  // the month's free allowance used up) turn Esri off for the visit, and the other maps show instead
+  esriOff:false,esriBad:0,
+  esriFail(){if(!this.esriOff&&++this.esriBad>=3)this.esriOff=true;return this.esriOff},
+  esriOk(){this.esriBad=0},
+  // the same maps on a Leaflet map (planning a hike, the live guide): from zoom 11 the Swiss map inside Switzerland, drawn at twice
+  // its detail as on its own site, and Esri's Outdoor map around it; each tile comes from the one source that has it
+  leaflet(map){const M=HP.maps,ZS=11,box=(l,c)=>{const b=l._tileCoordsToBounds(c);return[b.getSouth(),b.getWest(),b.getNorth(),b.getEast()]};
+    const chAt=(l,c)=>c.z>=ZS&&M.boxCH(...box(l,c));
+    const Sw=L.TileLayer.extend({getTileUrl(c){return chAt(this,c)?M.swiss(this._getZoomForUrl(),c.x,c.y):T1}});
+    const Es=L.TileLayer.extend({getTileUrl(c){return chAt(this,c)?T1:M.outdoor(this._getZoomForUrl(),c.x,c.y)}});
+    let es=null,otm=null,probing=0;
+    // the credits of the maps in view only
+    const ac=map.attributionControl,shown=new Set(),credit=()=>{if(!map._loaded)return;const b=map.getBounds(),s=b.getSouth(),w=b.getWest(),n=b.getNorth(),e=b.getEast(),c=map.getCenter(),z=map.getZoom()>=ZS;
+      const anyCH=z&&[[s,w],[s,e],[n,w],[n,e],[c.lat,c.lng]].some(p=>inCH(p[0],p[1])),allCH=z&&M.boxCH(s,w,n,e);
+      const want=new Set([...(anyCH?[M.CREDIT.swiss]:[]),...(!allCH?[otm?M.CREDIT.otm:M.CREDIT.outdoor]:[])]);
+      if(ac){for(const t of shown)if(!want.has(t)){ac.removeAttribution(t);shown.delete(t)}for(const t of want)if(!shown.has(t)){ac.addAttribution(t);shown.add(t)}}};
+    const toOTM=()=>{if(otm)return;if(es)map.removeLayer(es);otm=L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{subdomains:'abc',maxZoom:19,maxNativeZoom:17}).addTo(map);otm.bringToBack();credit()};
+    if(M.esriOff)toOTM();
+    else{es=new Es('',{tileSize:512,zoomOffset:-1,maxZoom:19,maxNativeZoom:19}).addTo(map);es.on('tileload',()=>M.esriOk());
+      // a picture that didn't come: ask once more to see why, and count it only when Esri itself said no (not when the phone is offline)
+      es.on('tileerror',e=>{if(otm)return;if(M.esriOff)return toOTM();const u=e.tile&&e.tile.src;if(!navigator.onLine||probing>2||!u||u.startsWith('data:'))return;probing++;
+        fetch(u,{mode:'cors',cache:'no-store'}).then(r=>{if(r.status!==404&&(!r.ok||!/^image\//.test(r.headers.get('content-type')||''))&&M.esriFail())toOTM()}).catch(()=>{}).finally(()=>probing--)})}
+    const sw=new Sw('',{tileSize:128,zoomOffset:1,maxZoom:19,maxNativeZoom:17}).addTo(map);
+    map.on('moveend zoomend',credit);map.whenReady(credit);return{sw,get es(){return es},get otm(){return otm}}}};
+})();
+

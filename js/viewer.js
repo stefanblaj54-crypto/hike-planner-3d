@@ -12,8 +12,8 @@ const MONN=['','January','February','March','April','May','June','July','August'
 const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
 // ArcGIS World Imagery (Esri) for sharp close-ups outside Switzerland: the owner's ArcGIS Location Platform key, basemaps only,
 // free tier with pay-as-you-go off. When it expires or this month's free use runs out, the view goes back to the other pictures.
-const ESRI_KEY='AAPTaeWnjK3eBR4wrcT5-LAgFWg..DondMwmab5TQtawxEoLPSVJARXpeBr7jV05xOwmRQFh9BdRE0beQz6gPqNhHBy_QTIu0NU31-40eG8xm_exWbu9MT3VHPuHW67DvPqdW_1sN76hm5XdWjTNlnMTKJKco-IqTstbsx9dmoOztq5hWkmd05ip9_IT01T3D6mWeflgz2tKMVVt9kFzb1NklXOTMGIL6Z-dCO27fhpqBtGcTFAKBkTnjpNoZg3iXW63iCOem4CcX6DPwBN1tU6mJnwtlTgQzAT1_OQqgxG7f',ESRI_URL='https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer';
-let esriOff=false,esriBad=0,esriMeta=false;
+const ESRI_KEY=HP.ESRI_KEY,ESRI_URL='https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer';
+let esriMeta=false;
 let HGT=null;
 let D,S,R,N,DAYS,PTS,overnight={},PX=null,TER=null,MPP=6.5,WALK,BASEW,CLK,SHADE,EXPO,STEEP,SLOPE,FCP=null,TAGT='',OFFICIAL={},AC=null,V3=null,onChange=null,GW={},CELLS=[],ROs=[],BLOBS={};
 const walk=i=>WALK[i],clock=i=>CLK[i],dayOf=i=>DAYS[R.day[i]-1];
@@ -755,7 +755,7 @@ async function runTrail(force){if(TRAILRUN||!R||!navigator.onLine||!HP.trailChec
 // Esri asks for its data sources to be named exactly as the service gives them; ask once a visit, keep the last answer.
 function esriCredit(){esriMeta=true;try{const c=localStorage.getItem('hp-esri-src');if(c)$('#attrib-esri-src').textContent=c}catch(e){}
   fetch(`${ESRI_URL}?f=json&token=${ESRI_KEY}`).then(r=>r.json()).then(j=>{const c=j&&typeof j.copyrightText==='string'&&j.copyrightText.replace(/^Source:\s*/i,'').trim();if(c&&c.length<400){$('#attrib-esri-src').textContent=c;try{localStorage.setItem('hp-esri-src',c)}catch(e){}}}).catch(()=>{})}
-function esriFailed(){if(esriOff||++esriBad<3)return;esriOff=true;HP.toast('The sharper ArcGIS satellite pictures are not available right now, so the map uses the usual ones.')}
+function esriFailed(){if(HP.maps.esriOff)return;if(HP.maps.esriFail())HP.toast('The ArcGIS maps are not available right now, so the 3D view uses the usual ones.')}
 
 /* ---------- profile ---------- */
 const SKYC={sun:['#f2c641','Sun'],cu:['#ead58b','Sun and cloud'],shade:['#b8ae8e','Mountain shade'],grey:['#a9b2b8','Grey, overcast'],cloud:['#d9dee2','In cloud or fog'],rain:['#4d8fd4','Rain'],snow:['#b7d3f0','Snow or sleet'],storm:['#7b4fc9','Thunderstorm'],night:['#28344d','Dark'],none:['#e6e8e4','No forecast']};
@@ -863,7 +863,8 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   let mapPicked=false;
   const dropTex=keep=>{for(const k of Object.keys(tex))if(k!==keep){tex[k].then(t=>t.dispose()).catch(()=>{});delete tex[k]}};
   let GTEX=null,HS=null;
-  const credit=()=>{$('#attrib').hidden=S.map!=='sat';$('#attrib-ch').hidden=!(S.map==='sat'&&TILES.swiss());$('#attrib-esri').hidden=!(S.map==='sat'&&TILES.esri())};
+  const credit=()=>{$('#attrib').hidden=S.map!=='sat';$('#attrib-ch').hidden=!(S.map==='sat'&&TILES.swiss());$('#attrib-esri').hidden=!(S.map==='sat'&&TILES.esri());
+    const tp=$('#attrib-topo'),tk=S.map==='topo'?TILES.topo()||(D.topoSrc==='swisstopo'?'swiss':'otm'):'';tp.hidden=!tk;if(tk)tp.textContent=tk.split(',').map(k=>HP.maps.CREDIT[k]).join(' · ')};
   const applyMap=()=>{const m=S.map;WXV.U.uStyle.value=m==='sat'?0:m==='topo'?1:2;
     if(m==='relief'){GTEX=null;dropTex(null);TILES.restyle();credit();return}
     TILES.restyle();credit();
@@ -927,8 +928,9 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
   const f0=frameDay();camera.position.copy(f0.pos);controls.target.copy(f0.target);controls.update();framedPort=camera.aspect<1;
   const WXV=initWX3D({fogD:()=>FP?6500:camera.position.distanceTo(controls.target),scene,renderer,camera,controls,sun,hemi,W,H,M,minH,maxH,LM,stage,det:det0,view:f0.pos.clone().sub(f0.target)});resize();
   // ---------- the ground: a quadtree of map tiles that get finer and sharper where the camera is close, like a web map ----------
-  // Far away the model shows the pictures saved with the hike. Close up, each tile loads its own picture (Swiss aerial
-  // pictures inside Switzerland for Satellite, OpenTopoMap for Topo) and its ground follows the detailed heights.
+  // Far away the model shows the satellite picture saved with the hike. Close up, each tile loads its own picture (Swiss aerial
+  // pictures inside Switzerland, ArcGIS elsewhere); for Topo every tile loads its own map while there is a connection.
+  // Its ground follows the detailed heights.
   const hgt=(px,py)=>{if(!HS)return TER.at(px,py);const w=HS.w,X=Math.min(Math.max(px/W*w-.5,0),w-1.001),Y=Math.min(Math.max(py/H*HS.h-.5,0),HS.h-1.001),c=X|0,r=Y|0,fx=X-c,fy=Y-r,k=r*w+c,q=HS.q;
     return HS.min+.2*(q[k]*(1-fx)*(1-fy)+q[k+1]*fx*(1-fy)+q[k+w]*(1-fx)*fy+q[k+w+1]*fx*fy)};
   const TILES=(()=>{
@@ -936,17 +938,26 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     const dpx=()=>HS?W/HS.w:GS,NSEG=z=>Math.max(16,Math.min(NMAX,Math.round(span(z)/dpx())));
     const ZB=Math.max(8,Math.min(15,Math.floor(14-Math.log2(Math.max(W,H)/1024))));
     const ZG=()=>Math.max(ZB,Math.ceil(14-Math.log2(NMAX*dpx()/TS)));
-    const OTM=(z,x,y)=>`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${z}/${x}/${y}.png`,SWISS=(z,x,y)=>`https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/${z}/${x}/${y}.jpeg`;
-    const ESRI=(z,x,y)=>`${ESRI_URL}/tile/${z}/${y}/${x}?token=${ESRI_KEY}`,PO={zmax:17,url:OTM},PS={zmax:18,url:SWISS,swiss:true},PE={zmax:18,url:ESRI,esri:true};
+    const SWISS=(z,x,y)=>`https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.swissimage/default/current/3857/${z}/${x}/${y}.jpeg`;
+    const ESRI=(z,x,y)=>`${ESRI_URL}/tile/${z}/${y}/${x}?token=${ESRI_KEY}`,PS={k:'PS',zmax:18,url:SWISS,swiss:true},PE={k:'PE',zmax:18,url:ESRI,esri:true};
+    // the topographic map (since 2.2): the Swiss national map for tiles wholly in Switzerland (each from its four tiles one zoom closer,
+    // which is the detail its own site shows), Esri's Outdoor map elsewhere (512-pixel tiles), OpenTopoMap if Esri can't answer.
+    // With a connection they are used at every distance, so near and far look the same; without one, the picture saved with the hike shows.
+    // 512-pixel pictures (big) let a tile grow half as large again on screen before it splits: as sharp as the satellite pictures, with fewer tiles
+    // A Swiss tile that fails is tried once more, then shows its larger tile's Swiss picture rather than another map's style.
+    const PT={k:'PT',zmax:17,url:HP.maps.swiss,sub:true,big:true,live:true,cr:'swiss',tries:2},PEO={k:'PEO',zmax:18,url:HP.maps.outdoor,big:true,esri:true,live:true,cr:'outdoor',tries:2},PO={k:'PO',zmax:17,url:HP.maps.otm,live:true,cr:'otm'};
     const inCH=t=>t.lat>45.78&&t.lat<47.86&&t.lon>5.92&&t.lon<10.53;
-    // the pictures to try for a tile, best first; t.pf counts the ones that failed
-    const prov=t=>{const L=S.map==='topo'?[PO]:S.map==='sat'?(inCH(t)?[PS,PE]:[PE]):[];return L.filter(p=>!(p.esri&&esriOff))[t.pf||0]||null};
-    let gEff=99; // the zoom the saved picture already matches: tiles only fetch pictures sharper than that
-    const own=t=>{const p=prov(t);return p&&t.z<=p.zmax&&t.z>gEff+.3?p:null};
-    const all=new Map(),idxC=new Map(),build=[],loads=[];let active=0,sel=0,drawnKey='',lastSel=-1e9,dirty=true,shadowAt=0,shadowDue=false,swissOn=false,esriOn=false,coverPass=false,drawn=[];
+    // the pictures to try for a tile, best first; t.pf counts each one's failures (a 404 just means no picture at that zoom)
+    const prov=t=>{const L=S.map==='topo'?(t.ch?[PT]:[PEO,PO]):S.map==='sat'?(inCH(t)?[PS,PE]:[PE]):[];
+      for(const p of L)if(!(p.esri&&HP.maps.esriOff)&&(t.pf&&t.pf[p.k]||0)<(p.tries||1))return p;return null};
+    let gEff=99; // the zoom the saved picture already matches: tiles only fetch pictures sharper than that (unless the map is live)
+    const own=t=>{const p=prov(t);return p&&t.z<=p.zmax&&(t.z>gEff+.3||p.live&&navigator.onLine)?p:null};
+    const all=new Map(),idxC=new Map(),build=[],loads=[];let active=0,sel=0,drawnKey='',lastSel=-1e9,dirty=true,shadowAt=0,shadowDue=false,swissOn=false,esriOn=false,topoOn='',coverPass=false,drawn=[];
     const mk=(z,x,y)=>{const k=z+'/'+x+'/'+y;let t=all.get(k);if(t)return t;const s=span(z),ax=x*s-D.x0,ay=y*s-D.y0;
       t={k,z,x,y,s,ax,ay,r:{x0:Math.max(0,ax),y0:Math.max(0,ay),x1:Math.min(W,ax+s),y1:Math.min(H,ay+s)},mesh:null,mr:{value:new THREE.Vector4(0,0,1,1)},tex:null,ts:0,src:'',split:false,used:0,
-        lat:HP.geo.lat(D.y0+ay+s/2,14),lon:HP.geo.lon(D.x0+ax+s/2,14),h0:minH,h1:maxH,stale:false,queued:false,swiss:false,esri:false,pf:0};all.set(k,t);return t};
+        lat:HP.geo.lat(D.y0+ay+s/2,14),lon:HP.geo.lon(D.x0+ax+s/2,14),h0:minH,h1:maxH,stale:false,queued:false,swiss:false,esri:false,ek:false,cr:'',pf:null};
+      // Swiss when the part of the tile that is drawn lies wholly in Switzerland (the Swiss map is blank further out)
+      const r=t.r;t.ch=HP.maps.boxCH(HP.geo.lat(D.y0+r.y1,14),HP.geo.lon(D.x0+r.x0,14),HP.geo.lat(D.y0+r.y0,14),HP.geo.lon(D.x0+r.x1,14));all.set(k,t);return t};
     const kids=t=>{const out=[];for(let j=0;j<2;j++)for(let i=0;i<2;i++){const c=mk(t.z+1,t.x*2+i,t.y*2+j);if(!c.mesh){c.h0=t.h0;c.h1=t.h1}if(c.r.x1>c.r.x0&&c.r.y1>c.r.y0)out.push(c)}return out};
     const s0=span(ZB),roots=[];for(let y=Math.floor(D.y0/s0);y<=Math.floor((D.y0+H-1)/s0);y++)for(let x=Math.floor(D.x0/s0);x<=Math.floor((D.x0+W-1)/s0);x++)roots.push(mk(ZB,x,y));
     // triangles of an n×n patch plus a skirt hanging down from its border, which hides the cracks between patches of different detail
@@ -969,30 +980,34 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
         t.mesh=new THREE.Mesh(g,m);t.mesh.castShadow=t.mesh.receiveShadow=true;t.mesh.visible=false;t.src='';tg.add(t.mesh)}t.stale=false;dirty=true};
     const fr=new THREE.Frustum(),pm=new THREE.Matrix4(),inv=new THREE.Matrix4(),bx=new THREE.Box3(),cc=new THREE.Vector3(),lastM=new THREE.Matrix4();let Kpx=1000,lastH=0;
     const SPLIT=coarse?440:400,MERGE=coarse?330:300,GSPL=coarse?8:7,GMRG=coarse?5.5:5;
-    const want=t=>{t.vis=true;if(t.z>=18)return t.split=false;const geo=t.z<ZG(),img=!!own({z:t.z+1,lat:t.lat,lon:t.lon});if(!geo&&!img)return t.split=false;
+    const want=t=>{t.vis=true;if(t.z>=18)return t.split=false;const geo=t.z<ZG(),pc=own({z:t.z+1,lat:t.lat,lon:t.lon,ch:t.ch}),img=!!pc,kk=pc&&pc.big?1.5:1;if(!geo&&!img)return t.split=false;
       bx.min.set(wx(t.r.x0),t.h0*S.ex,wz(t.r.y0));bx.max.set(wx(t.r.x1),t.h1*S.ex,wz(t.r.y1));t.vis=fr.intersectsBox(bx);if(!t.vis)return t.split=false;
       bx.getCenter(cc);const rad=bx.min.distanceTo(bx.max)/2,d=Math.max(camera.position.distanceTo(cc)-rad,rad*.25,1),edge=(t.r.x1-t.r.x0)*M/d*Kpx;
-      return t.split=(geo&&edge/NSEG(t.z)>(t.split?GMRG:GSPL))||(img&&edge>(t.split?MERGE:SPLIT))};
+      return t.split=(geo&&edge/NSEG(t.z)>(t.split?GMRG:GSPL))||(img&&edge>(t.split?MERGE:SPLIT)*kk)};
     const visit=(t,out)=>{t.used=sel;if(want(t)){const ks=kids(t);ks.forEach(k=>{k.used=sel;if((!k.mesh||k.stale)&&!k.queued){k.queued=true;build.push(k)}});
         if(ks.length&&ks.every(k=>k.mesh)){ks.forEach(k=>visit(k,out));return}}
       if(t.stale&&!t.queued){t.queued=true;build.push(t)}out.push(t)};
     // the sharpest picture available for a tile: its own, else the nearest larger tile's, else the saved picture
-    const setSrc=t=>{let a=t,src=null;while(a){if(a.tex&&!(coverPass&&a.esri)){src=a;break}a=a.z>ZB?all.get((a.z-1)+'/'+(a.x>>1)+'/'+(a.y>>1)):null}
+    const setSrc=t=>{let a=t,src=null;while(a){if(a.tex&&!(coverPass&&a.ek)){src=a;break}a=a.z>ZB?all.get((a.z-1)+'/'+(a.x>>1)+'/'+(a.y>>1)):null}
       const key=(src?src.k:GTEX?'g':'w')+(coverPass?'c':'');if(key===t.src)return src;t.src=key;const v=t.mr.value,m=t.mesh.material;
       if(src){v.set((t.r.x0-src.ax)/src.s,1-(t.r.y1-src.ay)/src.s,(t.r.x1-t.r.x0)/src.s,(t.r.y1-t.r.y0)/src.s);m.map=src.tex}
       else{v.set(t.r.x0/W,1-t.r.y1/H,(t.r.x1-t.r.x0)/W,(t.r.y1-t.r.y0)/H);m.map=GTEX||white}return src};
     const pump=()=>{while(active<6&&loads.length){const{t,p}=loads.shift();if(t.used<sel-2||!t.mesh||!all.has(t.k)){t.ts=0;continue}active++;const style=S.map;
-      if(p.esri&&!esriMeta)esriCredit();
-      fetch(p.url(t.z,t.x,t.y),{mode:'cors'}).then(r=>{if(p.esri&&r.status!==404&&(!r.ok||!/^image\//.test(r.headers.get('content-type')||''))){esriFailed();throw Error('ArcGIS '+r.status)}if(!r.ok)throw Error('HTTP '+r.status);if(p.esri)esriBad=0;return r.blob()})
-        .then(b=>new Promise((ok,no)=>{const im=new Image(),u=URL.createObjectURL(b);im.onload=()=>{URL.revokeObjectURL(u);ok(im)};im.onerror=()=>{URL.revokeObjectURL(u);no(Error('picture'))};im.src=u}))
-        .then(im=>{if(!alive||S.map!==style||!all.has(t.k)){t.ts=0;return}const tx=new THREE.Texture(im);tx.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());tx.needsUpdate=true;t.tex=tx;t.ts=2;t.swiss=!!p.swiss;t.esri=!!p.esri;dirty=true})
-        .catch(()=>{if(!alive||S.map!==style){t.ts=0;return}t.pf=(t.pf||0)+1;t.ts=own(t)?0:3;dirty=true}).finally(()=>{active--;pump()})}};
+      if(p.esri&&!p.cr&&!esriMeta)esriCredit();
+      const one=u=>fetch(u,{mode:'cors'}).then(r=>{if(p.esri&&r.status!==404&&(!r.ok||!/^image\//.test(r.headers.get('content-type')||''))){esriFailed();throw Error('ArcGIS '+r.status)}if(!r.ok)throw Error('HTTP '+r.status);if(p.esri)HP.maps.esriOk();return r.blob()})
+        .then(b=>new Promise((ok,no)=>{const im=new Image(),u=URL.createObjectURL(b);im.onload=()=>{URL.revokeObjectURL(u);ok(im)};im.onerror=()=>{URL.revokeObjectURL(u);no(Error('picture'))};im.src=u}));
+      (p.sub?Promise.all([0,1,2,3].map(k=>one(p.url(t.z+1,t.x*2+(k&1),t.y*2+(k>>1))))).then(ims=>{const c=document.createElement('canvas');c.width=c.height=512;const g=c.getContext('2d');ims.forEach((im,k)=>g.drawImage(im,(k&1)*256,(k>>1)*256,256,256));return c}):one(p.url(t.z,t.x,t.y)))
+        .then(im=>{if(!alive||S.map!==style||!all.has(t.k)){t.ts=0;return}const tx=new THREE.Texture(im);tx.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());tx.needsUpdate=true;t.tex=tx;t.ts=2;t.swiss=!!p.swiss;t.esri=!!p.esri&&!p.cr;t.ek=!!p.esri;t.cr=p.cr||'';dirty=true})
+        .catch(()=>{if(!alive||S.map!==style){t.ts=0;return}const pf=t.pf||(t.pf={});pf[p.k]=(pf[p.k]||0)+1;
+          // the next map to try at once; the same map once more after a short pause, so a moment without signal doesn't use up its tries
+          const np=own(t);if(np===p){t.ts=4;setTimeout(()=>{if(t.ts===4){t.ts=0;dirty=true}},2500)}else t.ts=np?0:3;dirty=true}).finally(()=>{active--;pump()})}};
     const drop=t=>{if(t.mesh){tg.remove(t.mesh);t.mesh.geometry.dispose();t.mesh.material.dispose();t.mesh=null}if(t.tex){t.tex.dispose();t.tex=null}all.delete(t.k)};
-    const evict=()=>{const cap=coarse?240:440;let nt=0;for(const t of all.values())if(t.tex)nt++;
+    const wt=t=>t.tex.image&&t.tex.image.width>256?2:1; // 512-pixel pictures (the topographic maps) count twice
+    const evict=()=>{const cap=coarse?240:440;let nt=0;for(const t of all.values())if(t.tex)nt+=wt(t);
       if(all.size<=cap&&nt<=(coarse?56:120))return;const old=[...all.values()].filter(t=>t.used<sel&&t.z>ZB).sort((a,b)=>a.used-b.used);
-      for(const t of old){if(all.size<=cap*.8&&nt<=(coarse?44:96))break;if(t.tex)nt--;drop(t)}
+      for(const t of old){if(all.size<=cap*.8&&nt<=(coarse?44:96))break;if(t.tex)nt-=wt(t);drop(t)}
       // still too many pictures: let tiles that are off screen fall back to their larger tile's picture
-      if(nt>(coarse?56:120))for(const t of drawn)if(t.tex&&t.vis===false&&nt>(coarse?44:96)){t.tex.dispose();t.tex=null;t.ts=0;t.src='';nt--}};
+      if(nt>(coarse?56:120))for(const t of drawn)if(t.tex&&t.vis===false&&nt>(coarse?44:96)){nt-=wt(t);t.tex.dispose();t.tex=null;t.ts=0;t.src=''}};
     function update(now){
       if(build.length){const t0=performance.now();while(build.length&&performance.now()-t0<(coarse?6:9)){const t=build.shift();t.queued=false;if(all.has(t.k)&&t.used>=sel-2)make(t)}}
       if(shadowDue&&now-shadowAt>350){renderer.shadowMap.needsUpdate=true;shadowAt=now;shadowDue=false}
@@ -1005,14 +1020,14 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
       const out=[];roots.forEach(r=>visit(r,out));drawn=out;
       const key=out.map(t=>t.k).join(',');
       if(key!==drawnKey){drawnKey=key;const on=new Set(out);for(const t of all.values())if(t.mesh)t.mesh.visible=on.has(t);shadowDue=true}
-      let sw=false,es=false;for(const t of out){const src=setSrc(t);if(src&&t.vis!==false){if(src.swiss)sw=true;if(src.esri)es=true}const p=!coverPass&&t.vis!==false&&own(t);if(p&&!t.ts){t.ts=1;loads.push({t,p})}}
-      if(sw!==swissOn||es!==esriOn){swissOn=sw;esriOn=es;credit()}
+      let sw=false,es=false;const tc=new Set();for(const t of out){const src=setSrc(t);if(src&&t.vis!==false){if(src.swiss)sw=true;if(src.esri)es=true;if(src.cr)tc.add(src.cr)}else if(t.vis!==false)tc.add(D.topoSrc==='swisstopo'?'swiss':'otm');const p=!coverPass&&t.vis!==false&&own(t);if(p&&!t.ts){t.ts=1;loads.push({t,p})}}
+      const tk=[...tc].sort().join(',');if(sw!==swissOn||es!==esriOn||tk!==topoOn){swissOn=sw;esriOn=es;topoOn=tk;credit()}
       pump();evict()}
     roots.forEach(make);
-    return{update,swiss:()=>swissOn,esri:()=>esriOn,cover(on){coverPass=on;dirty=true},
-      restyle(){for(const t of all.values()){if(t.tex){t.tex.dispose();t.tex=null}t.ts=0;t.src='';t.swiss=t.esri=false;t.pf=0}loads.length=0;swissOn=esriOn=false;dirty=true},
+    return{update,swiss:()=>swissOn,esri:()=>esriOn,topo:()=>topoOn,cover(on){coverPass=on;dirty=true},
+      restyle(){for(const t of all.values()){if(t.tex){t.tex.dispose();t.tex=null}t.ts=0;t.src='';t.swiss=t.esri=t.ek=false;t.cr='';t.pf=null}loads.length=0;swissOn=esriOn=false;topoOn='';dirty=true},
       heights(){for(const t of all.values())if(t.mesh)t.stale=true;roots.forEach(t=>{t.queued=true;build.push(t)});dirty=true},
-      stats:()=>({esri:esriOn,esriOff,esriTiles:drawn.filter(t=>t.vis!==false&&t.tex&&t.esri).length,dpx:+dpx().toFixed(2),onScreen:drawn.filter(t=>t.vis!==false).length,zs:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.z]=(o[t.z]||0)+1,o),{}),drawn:drawn.length,maxZ:Math.max(0,...drawn.map(t=>t.z)),own:drawn.filter(t=>t.tex).length,swiss:swissOn,tiles:all.size,ZB,ZG:ZG()}),
+      stats:()=>({esri:esriOn,esriOff:HP.maps.esriOff,esriTiles:drawn.filter(t=>t.vis!==false&&t.tex&&t.esri).length,dpx:+dpx().toFixed(2),onScreen:drawn.filter(t=>t.vis!==false).length,zs:drawn.filter(t=>t.vis!==false).reduce((o,t)=>(o[t.z]=(o[t.z]||0)+1,o),{}),drawn:drawn.length,maxZ:Math.max(0,...drawn.map(t=>t.z)),own:drawn.filter(t=>t.tex).length,swiss:swissOn,tiles:all.size,ZB,ZG:ZG()}),
       dispose(){for(const t of [...all.values()])drop(t);group.remove(tg)}}})();
   const v=new THREE.Vector3();let down=null,playing=null,raf=0;
   const pick=(e,tol)=>{const r=cv.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top,[a,b]=S.day?[DAYS[S.day-1].i0,DAYS[S.day-1].i1]:[0,N-1];let best=-1,bd=tol*tol;
@@ -1194,10 +1209,12 @@ gl_FragColor=vec4(enc(sx),enc(sz),1.-occ/${ND}.,1.);}`});
     dispose(){alive=false;cancelAnimationFrame(raf);FP=null;stage.classList.remove('fp');fpEl.hidden=true;fpCap.hidden=true;$('#fpbtn').setAttribute('aria-pressed','false');TILES.dispose();[bakeRT,bakeHT,white,bakeM,bq.geometry].forEach(x=>x&&x.dispose());controls.dispose();scene.traverse(o=>{if(o.geometry)o.geometry.dispose();const ms=o.material?(Array.isArray(o.material)?o.material:[o.material]):[];ms.forEach(m=>{for(const k in m){const t=m[k];if(t&&t.isTexture)t.dispose()}if(m.uniforms)for(const k in m.uniforms){const t=m.uniforms[k].value;if(t&&t.isTexture)t.dispose()}m.dispose()})});Object.values(tex).forEach(p=>p.then(t=>t.dispose()).catch(()=>{}));renderer.dispose();try{renderer.forceContextLoss()}catch(e){}}};
   recolor();syncTools();applyMap();WXV.time(true);$('#msg').hidden=true;raf=requestAnimationFrame(loop);useDEM();
   // hikes saved before version 1.4 get the satellite picture and the detailed heights once, with a connection
-  const need={sat:!BLOBS.sat,dem:!BLOBS.dem||!D.dem};
-  if((need.sat||need.dem)&&navigator.onLine&&HP.fetchExtras&&D.id){const xp=$('#xpill'),what=need.sat?'Getting satellite pictures':'Getting detailed heights';xp.textContent=what+'…';xp.hidden=false;
+  // hikes in Switzerland saved before 2.2 get the Swiss national map as their offline map (three tries at most)
+  const need={sat:!BLOBS.sat,dem:!BLOBS.dem||!D.dem,topo:D.topoSrc!=='swisstopo'&&(D.topoTry||0)<3&&HP.maps.boxCH(HP.geo.lat(D.y0+D.h,14),HP.geo.lon(D.x0,14),HP.geo.lat(D.y0,14),HP.geo.lon(D.x0+D.w,14))};
+  if((need.sat||need.dem||need.topo)&&navigator.onLine&&HP.fetchExtras&&D.id){const xp=$('#xpill'),what=need.sat?'Getting satellite pictures':need.dem?'Getting detailed heights':'Getting the Swiss map';xp.textContent=what+'…';xp.hidden=!(need.sat||need.dem);
     HP.fetchExtras(D,need,f=>{xp.textContent=`${what} ${Math.round(f*100)}%`},sig.signal).then(async x=>{if(!alive)return;
       if(x.dem&&x.demInfo){D.dem=x.demInfo;BLOBS.dem=x.dem;await HP.db.putBlob(D.id+':dem',x.dem);save();useDEM()}
+      if(x.topo){BLOBS.topo=x.topo;D.topoSrc=x.topoSrc;await HP.db.putBlob(D.id+':topo',x.topo);if(tex.topo){tex.topo.then(t=>t.dispose()).catch(()=>{});delete tex.topo}mapBtns();if(S.map==='topo')applyMap()}if(need.topo){if(!x.topo)D.topoTry=(D.topoTry||0)+1;save()}
       if(x.sat){BLOBS.sat=x.sat;await HP.db.putBlob(D.id+':sat',x.sat);mapBtns();if(!mapPicked){S.map='sat';applyMap();save()}syncTools();
         HP.thumb(D,x.sat).then(t=>t&&HP.setThumb&&HP.setThumb(D.id,t)).catch(()=>{})}
       xp.hidden=true}).catch(e=>{xp.hidden=true;if(alive)console.warn('extras',e)})}

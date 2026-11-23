@@ -10,7 +10,6 @@ const DIR8=['north','north-east','east','south-east','south','south-west','west'
 const dir8=b=>DIR8[Math.round((((b%360)+360)%360)/45)%8];
 const fmtM=m=>m<950?`${Math.max(10,Math.round(m/10)*10)} m`:`${(m/1000).toFixed(m<9950?1:0)} km`;
 const fmtT=h=>h<1/60?'now':h<1?`${Math.max(1,Math.round(h*60))} min`:fmtH(h).replace(' 00','');
-const inCH=(lat,lon)=>lat>45.8&&lat<47.85&&lon>5.95&&lon<10.5;
 const ARROW='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l6.5 17-6.5-4-6.5 4z"/></svg>';
 const sndOn=()=>{try{return localStorage.getItem('hp-guide-snd')!=='0'}catch(e){return true}};
 
@@ -41,7 +40,9 @@ function initMap(){const V=G.V,D=V.D,R=G.R,geo=HP.geo;
   // the hike's own map picture, kept with it: the map works with no connection
   const pic=V.BLOBS.topo||V.BLOBS.sat;
   if(pic){G.picURL=URL.createObjectURL(pic);const n=geo.lat(D.y0,D.z),s=geo.lat(D.y0+D.h,D.z),w=geo.lon(D.x0,D.z),e=geo.lon(D.x0+D.w,D.z);
-    const ov=L.imageOverlay(G.picURL,[[s,w],[n,e]],{interactive:false,attribution:V.BLOBS.topo?'© OpenStreetMap contributors, SRTM · map style © OpenTopoMap (CC-BY-SA)':'Sentinel-2 cloudless by EOX (Copernicus Sentinel data 2025)'}).addTo(map);
+    // under the live map tiles, so it shows wherever they don't (without a connection)
+    map.createPane('pic').style.zIndex=150;
+    const ov=L.imageOverlay(G.picURL,[[s,w],[n,e]],{pane:'pic',interactive:false,attribution:V.BLOBS.topo?(V.D.topoSrc==='swisstopo'?'Offline map © swisstopo':'Offline map © OpenStreetMap contributors, SRTM · style © OpenTopoMap (CC-BY-SA)'):'Sentinel-2 cloudless by EOX (Copernicus Sentinel data 2025)'}).addTo(map);
     ov.on('load',()=>{const im=ov.getElement();if(G&&im&&im.naturalWidth)G.picZ=D.z+Math.log2(im.naturalWidth/D.w)})}
   addTiles();
   for(const d of V.DAYS){const ll=[];for(let i=d.i0;i<=d.i1;i++)ll.push([R.lat[i],R.lon[i]]);
@@ -57,10 +58,8 @@ function initMap(){const V=G.V,D=V.D,R=G.R,geo=HP.geo;
   const day=todayDay(),d=V.DAYS[(day||1)-1],b=L.latLngBounds([]);for(let i=d.i0;i<=d.i1;i+=3)b.extend([R.lat[i],R.lon[i]]);map.fitBounds(b,{padding:[30,30]});
   map.on('dragstart',()=>{if(G&&G.follow){G.follow=false;render()}});
   addEventListener('online',addTiles)}
-// sharper map tiles when there is a connection: the Swiss national map in Switzerland, OpenTopoMap elsewhere
-function addTiles(){if(!G||G.tiles||!navigator.onLine)return;const R=G.R,ch=inCH(R.lat[0],R.lon[0])&&inCH(R.lat[G.N-1],R.lon[G.N-1]);
-  G.tiles=(ch?L.tileLayer('https://wmts.geo.admin.ch/1.0.0/ch.swisstopo.pixelkarte-farbe/default/current/3857/{z}/{x}/{y}.jpeg',{maxZoom:19,maxNativeZoom:17,attribution:'Map © swisstopo'})
-    :L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{subdomains:'abc',maxZoom:19,maxNativeZoom:17,attribution:'© OpenStreetMap contributors, SRTM · map style © OpenTopoMap (CC-BY-SA)'})).addTo(G.map);G.tiles.bringToBack()}
+// sharper map tiles when there is a connection: the Swiss national map in Switzerland, Esri's Outdoor map elsewhere
+function addTiles(){if(!G||G.tiles||!navigator.onLine)return;G.tiles=HP.maps.leaflet(G.map)}
 
 /* ---------- position ---------- */
 function startGPS(){if(!('geolocation'in navigator)){G.err='none';return}

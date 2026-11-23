@@ -79,6 +79,14 @@ async function loadDEM(bb,zd,prog,signal){
 const SAT={year:2025,zmax:13,url:(z,x,y)=>`https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2025_3857/default/g/${z}/${y}/${x}.jpg`};
 HP.SAT_CREDIT={text:'Sentinel-2 cloudless 2025 by EOX',href:'https://s2maps.eu',full:'Sentinel-2 cloudless - https://s2maps.eu by EOX IT Services GmbH (Contains modified Copernicus Sentinel data 2025)'};
 const topoURL=(z,x,y)=>`https://${'abc'[(x+y)%3]}.tile.opentopomap.org/${z}/${x}/${y}.png`;
+// the map picture kept with a hike for offline use: the Swiss national map when the whole model lies in Switzerland (its tiles one zoom
+// closer than the picture's own detail, as its site shows them), else OpenTopoMap. Esri's map may not be kept, so it is shown live only.
+const geoBox=bb=>[geo.lat(bb.y0+bb.h,Z),geo.lon(bb.x0,Z),geo.lat(bb.y0,Z),geo.lon(bb.x0+bb.w,Z)];
+function loadMapPic(bb,maxW,prog,signal){
+  if(HP.maps.boxCH(...geoBox(bb))){let zs=16;while(zs>11){const k=2**(zs-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=(coarse()?160:240))break;zs--}
+    return loadTopo(bb,zs,maxW,prog,signal,HP.maps.swiss,'#f4f4ef',.86).then(b=>b?{blob:b,src:'swisstopo'}:null)}
+  let zt=15;while(zt>10){const k=2**(zt-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=(coarse()?110:160)&&bb.w*k<=7000)break;zt--}
+  return loadTopo(bb,zt,maxW,prog,signal).then(b=>b?{blob:b,src:'otm'}:null)}
 // the most detailed zoom whose tiles fit the limits
 const pickZoom=(bb,zmax,maxTiles,maxW)=>{let z=zmax;while(z>9){const k=2**(z-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=maxTiles&&bb.w*k<=maxW)break;z--}return z};
 async function loadTopo(bb,zt,maxW,prog,signal,url=topoURL,bg='#eef0ea',q=.84){
@@ -100,6 +108,7 @@ const demZoom=bb=>{let zd=13;while(zd>9){const k=2**(zd-Z),r=tileRange(bb.x0*k,b
 HP.fetchExtras=async function(D,need,prog,signal){const bb={x0:D.x0,y0:D.y0,w:D.w,h:D.h},out={},parts=[];let fs=0,fd=0;const tell=()=>prog&&prog((need.sat?fs:0)*.75+(need.dem?fd:0)*.25,need);
   if(need.dem)parts.push(loadDEM(bb,demZoom(bb),f=>{fd=f;tell()},signal).then(dem=>{const r=demBlob(bb,dem);out.dem=r.blob;out.demInfo=r.info}));
   if(need.sat)parts.push(loadSat(bb,f=>{fs=f;tell()},signal).then(b=>{out.sat=b}));
+  if(need.topo)parts.push(loadMapPic(bb,coarse()?3072:4096,()=>{},signal).then(r=>{if(r){out.topo=r.blob;out.topoSrc=r.src}}).catch(()=>{}));
   await Promise.all(parts);return out};
 
 function reliefBlob(grid,mpp){
@@ -282,9 +291,8 @@ HP.buildPlan=async function(input,opts,progress,signal){
   const seg=new Float32Array(m-1),sl=rs.L/(m-1);for(let i=0;i<m-1;i++){const hz=sl/4000,de=R.e[i+1]-R.e[i],vt=de>0?de/300:-de/500;seg[i]=Math.max(hz,vt)+Math.min(hz,vt)/2}
   step('terrain',1,`${cols}×${rows} points`);
   // 3. map picture, in parallel with places
-  let zt=15;while(zt>10){const k=2**(zt-Z),r=tileRange(bb.x0*k,bb.y0*k,(bb.x0+bb.w)*k,(bb.y0+bb.h)*k);if(tileCount(r)<=(coarse()?110:160)&&bb.w*k<=7000)break;zt--}
   let ft=0,fs=0;const mp=()=>step('map',(ft+fs)/2);
-  const topoP=loadTopo(bb,zt,coarse()?3072:4096,f=>{ft=f;mp()},signal).catch(e=>{if(signal&&signal.aborted)throw e;return null});
+  const topoP=loadMapPic(bb,coarse()?3072:4096,f=>{ft=f;mp()},signal).catch(e=>{if(signal&&signal.aborted)throw e;return null});
   const satP=loadSat(bb,f=>{fs=f;mp()},signal).catch(e=>{if(signal&&signal.aborted)throw e;console.warn('satellite',e);return null});
   // 4. places
   step('places',.1);
@@ -316,7 +324,7 @@ HP.buildPlan=async function(input,opts,progress,signal){
   if(!names.start)names.start=endNear(0)||await placeName(R.lat[0],R.lon[0],signal);
   if(!names.end){const loop=geo.hav(R.lat[0],R.lon[0],R.lat[m-1],R.lon[m-1])<400;names.end=loop?names.start:(endNear(m-1)||await placeName(R.lat[m-1],R.lon[m-1],signal))}
   step('places',1,points.length?`${points.length} places on the way`:'no place names found');
-  const topo=await topoP,sat=await satP;step('map',1,sat&&topo?'':sat?'satellite only':topo?'map only, no satellite picture':'map pictures unavailable; relief only');
+  const topoR=await topoP,topo=topoR&&topoR.blob,sat=await satP;step('map',1,sat&&topo?'':sat?'satellite only':topo?'map only, no satellite picture':'map pictures unavailable; relief only');
   // 5. assemble, days and times
   const grid={step:GS,cols,rows,h:gh};
   const D={v:2,name:opts.name||`${names.start||'Hike'} to ${names.end||'finish'}`,date:opts.date,created:Date.now(),z:Z,w:bb.w,h:bb.h,mpp,x0:bb.x0,y0:bb.y0,center:{lat:cLat,lon:cLon},
@@ -336,6 +344,7 @@ HP.buildPlan=async function(input,opts,progress,signal){
   if(HP.forecastWindow(D.date).ok){try{D.fc=await HP.fetchForecast(D,signal);D.tz=D.tz||D.fc.tz;D.set.wx='fc'}catch(e){if(signal&&signal.aborted)throw e;console.warn('forecast',e)}
     try{D.ens=await HP.fetchEnsemble(D,signal)}catch(e){if(signal&&signal.aborted)throw e;console.warn('forecast runs',e)}}
   step('weather',1,D.fc?'forecast and climate':D.clim.rough?'rough climate estimate':'climate statistics');
+  if(topoR)D.topoSrc=topoR.src;
   return{D,blobs:{topo,relief,sat,dem:demR.blob}}};
 
 /* ---------- a small picture for the list of hikes ---------- */
