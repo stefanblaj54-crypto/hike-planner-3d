@@ -24,6 +24,8 @@ async def mock(ctx, log):
         q = urllib.parse.unquote_plus(r.request.post_data or "")
         if '["highway"]' in q:   # the trail check: real OpenStreetMap paths around the Bärentrek, nothing elsewhere
             log.append("trail"); await r.fulfill(status=200, content_type="application/json", body=mocks.trail(q), headers=HDR); return
+        if '"railway"~"^(station|halt)$"' in q:   # stations and bus stops near the ends (getting back, outside Switzerland)
+            log.append("stops"); await r.fulfill(status=200, content_type="application/json", body=mocks.stops(q), headers=HDR); return
         log.append("overpass"); await r.fulfill(status=200, content_type="application/json", body=mocks.overpass(DYN["pois"]), headers=HDR)
     await ctx.route("https://archive-api.open-meteo.com/**", arch)
     await ctx.route("https://api.open-meteo.com/**", fc)
@@ -51,7 +53,14 @@ async def mock(ctx, log):
         await r.fulfill(status=200, content_type="application/json", body=json.dumps({"results": DYN.get("closures", [])}), headers=HDR)
     await ctx.route("https://api3.geo.admin.ch/**", closures)
     async def nomi(r):
-        if "zoom=3" not in r.request.url: await r.continue_(); return
+        if "zoom=3" not in r.request.url:
+            # place names: the real answer when Nominatim gives one, else no name, so a refusal (it limits requests) can't fail a test
+            try:
+                resp = await r.fetch(timeout=15000); body = await resp.text()
+                if resp.status == 200 and body.strip().startswith("{"):
+                    await r.fulfill(status=200, content_type="application/json", body=body, headers=HDR); return
+            except Exception: pass
+            await r.fulfill(status=200, content_type="application/json", body=json.dumps({"address": {}}), headers=HDR); return
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(r.request.url).query); lat, lon = float(qs["lat"][0]), float(qs["lon"][0])
         cc = "ch" if 45.8 < lat < 47.8 and 5.9 < lon < 10.5 else "ro" if 43.6 < lat < 48.3 and 20.2 < lon < 29.7 else "it"
         await r.fulfill(status=200, content_type="application/json", body=json.dumps({"address": {"country_code": cc}}), headers=HDR)
@@ -60,6 +69,10 @@ async def mock(ctx, log):
     async def brouter(r):
         log.append("brouter"); await r.fulfill(status=200, content_type="application/json", body=mocks.brouter(r.request.url), headers=HDR)
     if os.environ.get("BROUTER") != "live": await ctx.route("https://brouter.de/**", brouter)
+    # the Swiss timetable (transport.opendata.ch), so the way back is the same every run
+    async def transport(r):
+        log.append("transport"); st, body = mocks.transport(r.request.url); await r.fulfill(status=st, content_type="application/json", body=body, headers=HDR)
+    await ctx.route("https://transport.opendata.ch/**", transport)
 
 def watch(pg, errs):
     pg.on("pageerror", lambda e: errs.append("PAGEERROR " + str(e)))

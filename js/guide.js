@@ -197,6 +197,10 @@ function render(first){if(!G)return;const V=G.V,R=G.R,f=G.fix,cc=V.cc&&V.cc[0];
     if(A.hz)L.push(`<li class="${A.hz.lvl}">${A.hz.i0<=G.im?'Here':`In ${fmtM((R.d[A.hz.i0]-G.along)*1000)}`}: ${A.hz.what}${A.hz.tip?`, ${A.hz.tip}`:''}</li>`);
     if(A.dark)L.push(`<li class="bad">Sunset ${fmtClock(A.set)}: you would arrive ${fmtT(A.arr-A.set)} after it. Speed up, or stop earlier.</li>`);
     if(A.place)L.push(`<li>Next: ${esc(A.place.name)} · ${fmtM((R.d[A.place.i]-G.along)*1000)} · ${fmtT(A.tPlace)}</li>`);
+    // on the last day: the train or bus back after the walk, at the arrival the guide now expects (since 2.4)
+    if(last){const B=V.D.back,pk=HP.backPick(B,A.arr);if(pk&&(pk.next||pk.last)){const st=esc(B.pt.f.name),to=esc(B.pt.t.name);
+      L.push(pk.missed?`<li class="bad">You would miss the last connection back (${pk.last.dep} from ${st}): plan a night here, or call for a lift.</li>`
+        :`<li class="${pk.margin<.75?'warn':''}">Back to ${to}: the ${pk.next.dep} from ${st}${pk.last&&pk.last!==pk.next?` · last ${pk.last.dep}`:''}</li>`)}}
     L.push(`<li class="mute">Day ${A.d.n}${V.DAYS.length>1?` of ${V.DAYS.length}`:''} · km ${A.km.toFixed(1)} of ${A.len.toFixed(1)} · to ${to}</li>`);
     P.querySelector('.glines').innerHTML=L.join('');P.querySelector('.gbar i').style.width=`${Math.max(0,Math.min(100,A.km/A.len*100)).toFixed(1)}%`}
   // the map for no signal: offered while there is a connection, until it is saved

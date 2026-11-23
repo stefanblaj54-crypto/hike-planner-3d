@@ -189,6 +189,8 @@ def brouter(url):
     qs = parse_qs(urlparse(url).query)
     pts = [tuple(map(float, p.split(","))) for p in qs.get("lonlats", [""])[0].split("|") if p]
     (lo0, la0), (lo1, la1) = pts[0], pts[-1]
+    car = qs.get("profile", [""])[0] == "car-fast"
+    if car and _dist(la1, lo1, 46.6052, 7.9206) < 800: return "target island detected for section 0\n"   # Wengen has no road
     kx = 111320 * math.cos(math.radians((la0 + la1) / 2)); ky = 110540
     dx, dy = (lo1 - lo0) * kx, (la1 - la0) * ky; L = math.hypot(dx, dy) or 1
     bow = .18 if "nogos" in qs else .08
@@ -201,4 +203,60 @@ def brouter(url):
         co.append([round(lon, 6), round(lat, 6), 1500.0])
         if k % 4 == 0 and k: msgs.append([str(round(lon * 1e6)), str(round(lat * 1e6)), "1500", "100", "1000", "0", "0", "0", "0", "highway=path sac_scale=mountain_hiking", "", "0", "0"])
     length = sum(math.hypot((co[k][0] - co[k - 1][0]) * kx, (co[k][1] - co[k - 1][1]) * ky) for k in range(1, len(co)))
-    return json.dumps({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": {"creator": "mock", "track-length": str(round(length)), "filtered ascend": "120", "messages": msgs}, "geometry": {"type": "LineString", "coordinates": co}}]})
+    props = {"creator": "mock", "track-length": str(round(length)), "filtered ascend": "120", "messages": msgs}
+    if car: props["total-time"] = str(round(length / 1000 / 55 * 3600))   # 55 km/h
+    return json.dumps({"type": "FeatureCollection", "features": [{"type": "Feature", "properties": props, "geometry": {"type": "LineString", "coordinates": co}}]})
+
+# ---------- the Swiss timetable (transport.opendata.ch) ----------
+# Stops near two places on the Bärentrek and anywhere else; connections every hour at :14, about two hours with changes, the last at
+# 21:14. Like the real one, the timetable reaches only some weeks ahead: dates more than 100 days ahead answer 400 with the window,
+# dates 40 to 100 days ahead come back empty (announced but not loaded).
+STOPS = [("8507475", "Kandersteg", 46.495394, 7.671415, "train"), ("8576371", "Kandersteg, Bahnhof", 46.495394, 7.67181, "bus"),
+         ("8507372", "Wengen", 46.604903, 7.921003, "train"), ("8507356", "Wengen (Männlichenbahn)", 46.6043, 7.9226, "cableway")]
+def _dist(la1, lo1, la2, lo2):
+    return math.hypot((la2 - la1) * 111200, (lo2 - lo1) * 111200 * math.cos(math.radians(la1)))
+def transport(url):
+    q = parse_qs(urlparse(url).query)
+    g = lambda k, d=None: q.get(k, [d])[0]
+    if "/locations" in url:
+        la, lo = float(g("x")), float(g("y"))
+        st = sorted(({"id": i, "name": n, "score": None, "coordinate": {"type": "WGS84", "x": a, "y": b}, "distance": round(_dist(la, lo, a, b)), "icon": ic}
+                     for i, n, a, b, ic in STOPS), key=lambda s: s["distance"])
+        if st[0]["distance"] > 3000:   # somewhere else: a made-up stop 300 m away
+            st = [{"id": "85%05d" % (int(abs(la * 1000 + lo * 100)) % 100000), "name": "Stop near %.3f, %.3f" % (la, lo), "score": None,
+                   "coordinate": {"type": "WGS84", "x": la + .002, "y": lo + .002}, "distance": 300, "icon": "bus"}]
+        return 200, json.dumps({"stations": st[:6]})
+    d = datetime.date.fromisoformat(g("date")); today = datetime.date.today(); ahead = (d - today).days
+    if ahead > 100:
+        end = today + datetime.timedelta(days=100)
+        return 400, json.dumps({"errors": [{"message": 'The router answered 400: {"error":"query time %s 14:00 is outside of loaded timetable window [%s 00:00, %s 00:00["}' % (d, today - datetime.timedelta(days=8), end)}]})
+    if ahead > 40:
+        return 200, json.dumps({"connections": []})
+    name = {s[0]: s[1] for s in STOPS}
+    fa, ta = name.get(g("from"), "Start stop"), name.get(g("to"), "End stop")
+    def one(h):
+        t = lambda hh, mm: "%sT%02d:%02d:00+0100" % (d, hh, mm)
+        legs = [("RE", "1", fa, h, 14, "Spiez", h, 44, "2"), ("IC", "61", "Spiez", h + 1, 5, "Interlaken West", h + 1, 22, "1"),
+                ("R", "62", "Interlaken West", h + 1, 27, "Lauterbrunnen", h + 1, 56, "2"), ("CC", "63", "Lauterbrunnen", h + 2, 0, ta, h + 2, 11, "3")]
+        secs = []
+        for k, n, a, ah, am, b, bh, bm, pl in legs:
+            secs.append({"journey": {"category": k, "number": n, "operator": "BLS", "to": b}, "walk": None,
+                         "departure": {"station": {"name": a}, "departure": t(ah, am), "platform": pl}, "arrival": {"station": {"name": b}, "arrival": t(bh, bm), "platform": "1"}})
+            if b == "Interlaken West":
+                secs.append({"journey": None, "walk": {"duration": 180}, "departure": {"station": {"name": b}, "departure": t(bh, bm), "platform": ""},
+                             "arrival": {"station": {"name": b}, "arrival": t(bh, bm + 3), "platform": ""}})
+        return {"from": {"departure": t(h, 14), "platform": "2"}, "to": {"arrival": t(h + 2, 11), "platform": "3"}, "duration": "00d01:57:00", "transfers": 3, "sections": secs}
+    if g("isArrivalTime") == "1":
+        return 200, json.dumps({"connections": [one(h) for h in (19, 20, 21)]})
+    hh, mm = map(int, g("time", "08:00").split(":")); h0 = hh if mm <= 14 else hh + 1
+    return 200, json.dumps({"connections": [one(h) for h in range(h0, min(22, h0 + 4))]})
+
+# ---------- stations and bus stops near the ends of a hike outside Switzerland (Overpass) ----------
+def stops(query):
+    import re
+    els, k = [], 0
+    for r, la, lo in re.findall(r'around:(\d+),(-?[\d.]+),(-?[\d.]+)', query):
+        la, lo = float(la), float(lo); k += 1
+        if r == "5000": els.append(node(900000 + k, la + .016, lo + .004, railway="station", name="Gara %d" % k))
+        else: els.append(node(910000 + k, la + .0035, lo, highway="bus_stop", name="Stația %d" % k))
+    return overpass(els)

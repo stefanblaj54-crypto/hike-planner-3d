@@ -814,3 +814,23 @@ html[data-vt=fade]::view-transition-new(root){animation:vt-in .26s var(--e-out) 
 /* headings and short texts break into even lines */
 .dhero b,.top h1,.hero h2,.dlgt,.gtop b,.card h2{text-wrap:balance}
 .dlist span,.alerts .al,.glines li,.about p{text-wrap:pretty}
+
+/* getting back (since 2.4): the connections back, leg by leg, and the walk back day by day */
+#backcard .kpis{margin:2px 0 0}
+.bkal{margin:12px 0 0}
+.bwalk{margin:12px 0 0}
+.csub{margin:16px 0 8px;display:flex;align-items:center;gap:8px}
+.legs{list-style:none;margin:0;padding:0 0 0 2px;display:grid;gap:0;border-left:2px solid var(--line)}
+.legs li{display:grid;grid-template-columns:3.4em 1fr;gap:10px;padding:7px 0 7px 12px;position:relative}
+.legs li::before{content:'';position:absolute;left:-6px;top:12px;width:10px;height:10px;border-radius:50%;background:var(--card);border:2px solid var(--ink)}
+.legs li b{font:600 1rem/1.25 'Barlow Semi Condensed',sans-serif;font-variant-numeric:tabular-nums;color:var(--ink)}
+.legs li span{font-size:.875rem;line-height:1.4;color:var(--ink)}
+.legs li span i{font-style:normal;color:var(--mute)}
+.legs li small{display:block;color:var(--mute);font-size:.8125rem;margin-top:2px}
+.legs li.lw{grid-template-columns:1fr;padding:2px 0 2px 12px}
+.legs li.lw::before{display:none}
+.legs li.lw span{color:var(--mute);font-size:.8125rem}
+.bkday+.bkday{margin-top:14px;padding-top:4px;border-top:1px solid var(--line)}
+.bkday .kpis{margin:4px 0 0}
+.bwx{margin:12px 0 0}
+.badt{color:var(--bad);font-weight:600}

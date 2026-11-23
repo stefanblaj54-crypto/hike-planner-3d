@@ -6,7 +6,7 @@ const LOOK=HP.look;
 const coarse=matchMedia('(pointer: coarse)').matches;
 const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const standalone=()=>matchMedia('(display-mode: standalone)').matches||navigator.standalone===true;
-const VERSION='2.3';
+const VERSION='2.4';
 const SCREENS=['home','new','build','view','custom','about','inv','detail'];
 let cur='',viewId=null,building=null,installEvt=null,pendingDet=null,pendingLook=null,pendingShow=null,pendingGuide=false,viewScroll=0;
 
@@ -487,6 +487,16 @@ async function findEasier(btn){const D=HP.viewer.current(),F=HP.viewer.safety();
   if(!await ask(html,{html:true,ok:'Create this hike'}))return;
   await leaveDetail();await flushSave();const from=D.id,st=D.set||{};HP.viewer.close();viewId=null;
   runBuild({pts:r.pts,sac:r.sac,wpts:[],names:{}},{name:`${D.name} · easier`.slice(0,80),date:D.date,days:String(D.days.length),start:st.start||'07:00',pace:String(st.pace||1),breaks:!!st.breaks},from)}
+/* ---------- the walk back as its own hike (since 2.4): the same paths the other way round, from the day after the last day ---------- */
+async function walkBack(){const D=HP.viewer.current();if(!D)return;const R=D.route,N=R.lat.length,st=D.set||{},n=D.days.length,d0=parseDay(D.date);d0.setDate(d0.getDate()+n);
+  const from=D.days[n-1].to,to=D.days[0].from;
+  if(!await ask(`<p><b>Plan the walk back</b></p><p>The same paths from ${esc(from)} back to ${esc(to)}, as a new hike from ${fmtDate(isoDay(d0))}: with its own 3D view, forecast, safety check and live guide. This hike stays as it is.</p>`,{html:true,ok:'Plan it'}))return;
+  const pts=[],sac=[];for(let i=N-1;i>=0;i--){pts.push({lat:R.lat[i],lon:R.lon[i]});sac.push(R.sac[i]||0)}
+  await leaveDetail();await flushSave();const id=D.id;HP.viewer.close();viewId=null;
+  runBuild({pts,sac:D.sacKnown?sac:null,wpts:[],names:{start:from,end:to}},{name:`${D.name} · way back`.slice(0,80),date:isoDay(d0),days:String(n),start:st.start||'07:00',pace:String(st.pace||1),breaks:!!st.breaks},id)}
+HP.walkBack=walkBack;
+// a page about getting back that is open when the timetable comes in is drawn again
+HP.viewer.onBack=()=>{if(cur==='view'&&history.state&&history.state.det==='back'){const r=HP.viewer.detail('back');if(r)$('#detail').innerHTML=r.html}};
 $('#scr-view .cards').addEventListener('click',e=>{const b=e.target.closest('[data-act="easier"]');if(b)findEasier(b);
   if(e.target.closest('[data-act="strip"]')){const D=HP.viewer.current();if(D)stripAsk(D);return}
   if(e.target.closest('[data-act="trailretry"]')){if(!navigator.onLine){HP.toast('Connect to the internet to check the trail.');return}HP.viewer.recheck()}});
@@ -536,6 +546,8 @@ $('#detail').addEventListener('click',e=>{const b=e.target.closest('[data-dact]'
   else if(a.startsWith('show:')){pendingShow=+a.slice(5);history.back()}
   else if(a==='guide'){pendingGuide=true;history.back()}
   else if(a==='easier')findEasier(b);
+  else if(a==='walkback')walkBack();
+  else if(a==='backcheck'){if(!navigator.onLine){HP.toast('Connect to the internet to look up the way back.');return}b.disabled=true;HP.toast('Looking up the way back…');HP.viewer.backCheck()}
   else if(a==='recheck'){if(!navigator.onLine){HP.toast('Connect to the internet to check the trail.');return}HP.toast('Checking the trail…');b.disabled=true;
     Promise.resolve(HP.viewer.recheck()).then(()=>{if(history.state&&history.state.det==='safety'){const r=HP.viewer.detail('safety');if(r)$('#detail').innerHTML=r.html}})}});
 $('#more').addEventListener('click',()=>{const D=HP.viewer.current();if(D)$('#striprow').textContent=HP.stripRun&&HP.stripRun.id===D.id?`Saving the map for no signal… ${Math.round((HP.stripRun.f||0)*100)}%`:D.strip?`Map for no signal: saved (${mbOf(D.strip.bytes)})`:'Save the map for no signal';
@@ -591,6 +603,10 @@ function planText(){const V=HP.viewer.state();if(!V)return null;const D=V.D,R=V.
   const L=[`My hike plan: ${D.name}`,`${fd(D.date)}${n>1?' to '+fd(dayOn(n-1)):''} · ${n} ${n>1?'days':'day'} · ${km.toFixed(1)} km · ${nf.format(Math.round(up/10)*10)} m up`,''];
   days.forEach((d,k)=>{L.push(`Day ${d.n}, ${fd(dayOn(k))}: ${d.from} to ${d.to}, ${d.km} km. I set off at ${clk(V.CLK[d.i0])} and expect to arrive about ${clk(V.CLK[d.i1])}.`);
     if(k<n-1)L.push(`Night ${d.n}: ${d.to}${hutLine(d.to)}`)});
+  // the way back home: the train or bus after the walk (Switzerland), or the drive back
+  const B=D.back,pk=HP.backPick(B,V.CLK[days[n-1].i1]),car=B&&B.car&&!B.car.none?B.car:null;
+  if(pk&&pk.next)L.push(`Getting back: the ${pk.next.dep} from ${B.pt.f.name} gets me to ${B.pt.t.name} at ${pk.next.arr}${pk.last&&pk.last!==pk.next?` (the last one leaves at ${pk.last.dep})`:''}.`);
+  else if(car)L.push(`Getting back: about ${HP.u.fmtH(car.min/60)} by road from ${days[n-1].to} to ${days[0].from}.`);
   const last=days[n-1],late=V.CLK[last.i1]+2,sos=(V.sos||[]).slice(0,3).map(([num,who])=>`${num} (${who.split(',')[0]})`).join(', ');
   L.push('',`If you haven't heard from me by ${clk(Math.min(23.99,late))} on ${fd(dayOn(n-1))}, call the mountain rescue and give them this plan: ${sos||'112'}.`,
     `Where I start: https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=14/${lat}/${lon}`,`The route is attached as a GPX file, which opens in most map apps.`);

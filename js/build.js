@@ -99,6 +99,74 @@ HP.strip=(()=>{const ZS=[[15,1500],[16,600],[17,250]];
   const remove=async id=>{await HP.db.delPrefix(id+':m:');await HP.db.delBlob(id+':vec')};
   return{kindOf,tiles,plan,save,remove}})();
 
+/* ---------- getting back (since 2.4): from where the hike ends to where it started ---------- */
+// In Switzerland, the timetable of all public transport (transport.opendata.ch, built on search.ch's timetable; free, no key, open to
+// web apps): the stops nearest the two ends, the connections after you arrive and the last one of the day. The timetable reaches only a
+// few months ahead: for a later date the same weekday at its end stands in, and the hike says so. Elsewhere the train stations and bus
+// stops near both ends, from OpenStreetMap. Everywhere the drive back by road (BRouter), for a lift or a taxi.
+const ODCH='https://transport.opendata.ch/v1/';
+const ODF=['from/departure','from/platform','to/arrival','to/platform','duration','transfers','sections/journey/category','sections/journey/number','sections/journey/operator',
+  'sections/journey/to','sections/departure/station/name','sections/departure/departure','sections/departure/platform','sections/arrival/station/name','sections/arrival/arrival',
+  'sections/arrival/platform','sections/walk/duration'].map(f=>'fields[]='+encodeURIComponent('connections/'+f)).join('&');
+async function odch(path,signal){const x=await HP.fetchT(ODCH+path,{signal},30000,'text');let j=null;try{j=JSON.parse(x.body)}catch(e){}
+  if(!x.ok){const m=JSON.stringify(j&&j.errors||x.body||''),w=m.match(/window \[(\d{4}-\d\d-\d\d)[^,\]]*, (\d{4}-\d\d-\d\d)/);
+    if(w){const e=Error('This date is outside the published timetable');e.win=[w[1],w[2]];throw e}
+    HP.log.net(ODCH,x.status+' '+m.slice(0,80));throw Error(x.status>=500||x.status===429?'The Swiss timetable is busy or down just now.':'The Swiss timetable could not answer this.')}
+  if(!j)throw Error('The Swiss timetable sent an answer the app could not read');return j}
+// the stop nearest a point; a train station only a little further away wins, as more leaves from it
+async function nearStop(p,signal){const j=await odch(`locations?x=${p.lat.toFixed(6)}&y=${p.lon.toFixed(6)}&type=station`,signal);
+  const L=(j.stations||[]).filter(s=>s.id&&s.coordinate&&s.coordinate.x!=null&&s.distance!=null).sort((a,b)=>a.distance-b.distance);if(!L.length)return null;
+  const t=L.find(x=>x.icon==='train'&&x.distance<=L[0].distance+400),s=t||L[0];
+  return{id:s.id,name:s.name,lat:s.coordinate.x,lon:s.coordinate.y,d:Math.round(s.distance),walk:Math.round(s.distance*1.3/4000*60),kind:s.icon||''}}
+const hhmm=s=>s?s.slice(11,16):'';
+function conn(c){const legs=(c.sections||[]).map(s=>s.journey?{k:s.journey.category||'',n:s.journey.number||'',op:s.journey.operator||'',to:s.journey.to||'',
+    a:s.departure.station.name,ad:hhmm(s.departure.departure),ap:s.departure.platform||'',b:s.arrival.station.name,bd:hhmm(s.arrival.arrival),bp:s.arrival.platform||''}
+    :{walk:Math.max(1,Math.round((s.walk&&s.walk.duration||0)/60)),ws:s.walk&&s.walk.duration||0,a:s.departure.station.name,b:s.arrival.station.name})
+    .filter(l=>!l.walk||l.a!==l.b||l.ws>60);   // a walk of a minute or less within one station is no news
+  const m=String(c.duration||'').match(/(\d+)d(\d\d):(\d\d)/);
+  return{dep:hhmm(c.from.departure),arr:hhmm(c.to.arrival),dd:c.from.departure.slice(0,10),day:c.to.arrival.slice(0,10)!==c.from.departure.slice(0,10)?1:0,pl:c.from.platform||'',
+    min:m?(+m[1])*1440+(+m[2])*60+(+m[3]):0,ch:c.transfers|0,legs}}
+// a date the timetable surely has instead of the hike's: the same weekday, a week or more from today (the published timetable often
+// ends weeks before the end it announces, so a date near its end can come back empty)
+function standIn(date,wk=1){const wd=u.parseDay(date).getDay(),d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+7*wk);while(d.getDay()!==wd)d.setDate(d.getDate()+1);return u.isoDay(d)}
+async function swissBack(a,b,q,signal,prev){const ps=prev&&prev.f&&prev.t&&prev.f.id?prev:null,[f,t]=ps?[ps.f,ps.t]:await Promise.all([nearStop(a,signal),nearStop(b,signal)]);
+  if(!f||!t)return{none:true,f,t};if(f.id===t.id)return{same:true,f,t};
+  // from an hour before you can be at the stop (arrival on the last day plus the walk to it), so a plan that changes a little still
+  // finds its connection in the list, and the last one of the day
+  const ready=Math.max(5,q.arr+f.walk/60-1),hh=Math.floor(ready),time=ready>=24?'23:59':`${String(hh).padStart(2,'0')}:${String(Math.min(59,Math.round((ready-hh)*60))).padStart(2,'0')}`;
+  const ask=d=>Promise.all([odch(`connections?from=${f.id}&to=${t.id}&date=${d}&time=${time}&limit=6&${ODF}`,signal),odch(`connections?from=${f.id}&to=${t.id}&date=${d}&time=23:59&isArrivalTime=1&limit=3&${ODF}`,signal)]);
+  // the timetable holds a couple of months at most: a later date goes straight to a stand-in date, and one that is outside it after all
+  // (an error naming its window) or comes back with nothing does too
+  const empty=x=>!(x[0].connections||[]).length&&!(x[1].connections||[]).length;let r=null,typ=null;
+  if((u.parseDay(q.date)-Date.now())/864e5<=60){try{r=await ask(q.date)}catch(e){if(!e.win)throw e}}
+  if(!r||empty(r))for(const wk of[1,2]){typ=standIn(q.date,wk);r=await ask(typ);if(!empty(r))break}
+  if(empty(r))return{f,t,date:q.date,typ,next:[],last:null,nodata:true};
+  // connections that leave the next day, or arrive after midnight, don't count as getting back that day
+  const qd=typ||q.date,next=(r[0].connections||[]).map(conn).map(c=>({...c,nd:c.dd!==qd?1:0})),late=(r[1].connections||[]).map(conn).filter(c=>!c.day&&c.dd===qd);
+  return{f,t,date:q.date,typ,next,last:late.length?late[late.length-1]:null}}
+// outside Switzerland: the train stations (5 km) and bus stops (2.5 km) nearest each end
+async function osmStops(a,b,signal){const ar=(p,r)=>`around:${r},${p.lat.toFixed(5)},${p.lon.toFixed(5)}`;
+  const els=await HP.overpass(`[out:json][timeout:25];(${[a,b].map(p=>`node["railway"~"^(station|halt)$"](${ar(p,5000)});node["highway"="bus_stop"](${ar(p,2500)});`).join('')});out body;`,signal);
+  const pick=p=>{let train=null,bus=null;for(const e of els){const t=e.tags||{},n=t['name:en']||t.name;if(!n||e.lat==null)continue;const d=Math.round(geo.hav(p.lat,p.lon,e.lat,e.lon)),o={name:n,lat:e.lat,lon:e.lon,d,walk:Math.round(d*1.3/4000*60)};
+      if(t.railway){if(d<=5000&&(!train||d<train.d))train=o}else if(d<=2500&&(!bus||d<bus.d))bus=o}return{train,bus}};
+  return{osm:true,f:pick(a),t:pick(b)}}
+async function carBack(a,b,signal){const x=await HP.fetchT(`https://brouter.de/brouter?lonlats=${a.lon.toFixed(6)},${a.lat.toFixed(6)}|${b.lon.toFixed(6)},${b.lat.toFixed(6)}&profile=car-fast&alternativeidx=0&format=geojson`,{signal},60000,'text');
+  const txt=(x.body||'').trim();if(txt[0]!=='{')return/island|not mapped/i.test(txt)?{none:true,at:/target/i.test(txt)?'to':'from'}:null;const p=JSON.parse(txt).features[0].properties,km=+p['track-length']/1000,s=+p['total-time'];
+  return km>0?{km:Math.round(km*10)/10,min:Math.round(s>0?s/60:km/50*60)}:null}
+// q: the last day's date, the arrival there in clock hours, and the key the result is kept under. The stops and the road found last
+// time are kept while the two ends stay where they are, so a new arrival time asks only for the connections.
+HP.backTrip=async function(D,q,signal){const R=D.route,N=R.lat.length,a={lat:R.lat[N-1],lon:R.lon[N-1]},b={lat:R.lat[0],lon:R.lon[0]};
+  const ends=[a.lat,a.lon,b.lat,b.lon].map(v=>v.toFixed(4)).join(','),prev=D.back&&D.back.ends===ends&&Date.now()-D.back.at<30*864e5?D.back:null;
+  const ch=HP.maps.inCH(a.lat,a.lon)&&HP.maps.inCH(b.lat,b.lon),soft=p=>p.catch(e=>{if(signal&&signal.aborted)throw e;return{err:e.message||String(e)}});
+  const[pt,car]=await Promise.all([soft(ch?swissBack(a,b,q,signal,prev&&prev.pt):prev&&prev.pt&&prev.pt.osm?Promise.resolve(prev.pt):osmStops(a,b,signal)),
+    prev&&prev.car?Promise.resolve(prev.car):soft(carBack(a,b,signal))]);
+  if(pt.err&&(!car||car.err))throw Error(pt.err);
+  return{v:1,at:Date.now(),key:q.key,ends,kind:ch?'ch':'osm',pt,car:car&&!car.err?car:null}};
+// the first connection you can still catch after arriving at arr (clock hours), and the last one of the day
+HP.backPick=(B,arr)=>{const P=B&&B.pt;if(!P||!P.next)return null;const h=s=>{const[a,b]=s.split(':').map(Number);return a+b/60},ready=arr+(P.f&&P.f.walk||0)/60;
+  const all=[...P.next,...(P.last?[P.last]:[])].filter(c=>!c.day&&!c.nd),next=all.filter(c=>h(c.dep)>=ready+5/60).sort((x,y)=>h(x.dep)-h(y.dep))[0]||null,last=P.last&&!P.last.day?P.last:null;
+  return{next,last,ready,missed:!!last&&h(last.dep)<ready+5/60,margin:last?h(last.dep)-ready:null,h}};
+
 /* ---------- tiles ---------- */
 async function getImage(url,signal){const x=await HP.fetchT(url,{signal,mode:'cors'},15000,'blob');if(!x.ok){const e=Error('HTTP '+x.status);e.status=x.status;throw e}const b=x.body;
   if(self.createImageBitmap){try{return await createImageBitmap(b,{colorSpaceConversion:'none',premultiplyAlpha:'none'})}catch(e){}}

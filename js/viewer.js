@@ -291,7 +291,7 @@ function open(plan,blobs,cb){
   const fw=HP.forecastWindow(D.date);if(fw.ok&&navigator.onLine&&(!D.fc||!D.ens||Date.now()-D.fc.issued>3*3600e3||!D.fc.pts.some(p=>p.h.w8s&&p.h.w8s.length)))updateForecast(false);
   if(D.clim&&!D.clim.rough&&!D.clim.wd&&navigator.onLine&&HP.fetchClimWind)HP.fetchClimWind(D.clim,D.center.lat,D.center.lon,AC.signal).then(w=>{if(!w||!R||!D.clim)return;Object.assign(D.clim,w);WFC.clear();WXC.clear();LKC.clear();refreshTimes();save()}).catch(()=>{});
   if(navigator.onLine&&D.clim&&!D.clim.cls)refreshClimate();
-  runTrail(false);fetchHuts();addEventListener('online',()=>{runTrail(false);fetchHuts()},sig);
+  runTrail(false);fetchHuts();fetchBack(false);addEventListener('online',()=>{runTrail(false);fetchHuts();fetchBack(false)},sig);
 }
 async function refreshClimate(){const plan=D,z=plan.clim.z||[plan.terr.min,plan.terr.max];
   try{const c=await HP.fetchClimate(plan.center.lat,plan.center.lon,z[0],z[1]);if(plan!==D)return;D.clim=c;D.tz=D.tz||c.tz;LKC.clear();WXC.clear();renderWxChips();refreshTimes();save()}catch(e){console.warn('climate',e)}}
@@ -377,6 +377,119 @@ function hutLine(name){const h=(D.huts||{})[name];if(!h)return'';const s=seasonO
 // the details of an older hike's huts, once, with a connection
 async function fetchHuts(){if(D.hutsAt||!navigator.onLine||!HP.hutInfo||!D.points.some(p=>/hut|camp|shelter/.test(p.kind)))return;const plan=D;
   try{const h=await HP.hutInfo(plan,AC&&AC.signal);if(plan!==D)return;D.huts=h;D.hutsAt=Date.now();save();renderBrief()}catch(e){if(e&&e.name!=='AbortError')console.warn('huts',e)}}
+
+/* ---------- getting back (since 2.4): by train and bus, by road, or on foot the same way ---------- */
+let BACKRUN=false,BACKT=0;
+const isLoop=()=>HP.geo.hav(R.lat[0],R.lon[0],R.lat[N-1],R.lon[N-1])<400;
+// what the transport back depends on: the dates, both ends, and roughly when you arrive (the list covers some hours around it)
+const backKey=()=>[D.date,DAYS.length,Math.round(CLK[N-1]/2),R.lat[N-1].toFixed(4),R.lon[N-1].toFixed(4),R.lat[0].toFixed(4),R.lon[0].toFixed(4)].join('|');
+async function fetchBack(force){if(BACKRUN||!R||!CLK||isLoop()||!navigator.onLine||!HP.backTrip)return;const B=D.back,k=backKey(),last=hikeDate(DAYS.length),t0=new Date();t0.setHours(0,0,0,0);
+  if(last<t0)return;   // the hike is over
+  if(!force&&B&&B.key===k&&Date.now()-B.at<7*864e5)return;
+  if(!force&&D.backErr&&Date.now()-D.backErr<10*60e3)return;   // after a failure, try again ten minutes later
+  const plan=D;BACKRUN=true;renderBackCard();
+  try{const r=await HP.backTrip(plan,{date:isoDay(last),arr:CLK[N-1],key:k},AC&&AC.signal);if(plan!==D)return;D.back=r;delete D.backErr;save()}
+  catch(e){if(plan===D&&!(e&&e.name==='AbortError')){D.backErr=Date.now();console.warn('getting back',e)}}
+  finally{BACKRUN=false;if(plan===D&&R){renderBackCard();HP.viewer.onBack&&HP.viewer.onBack()}}}
+// the same way back on foot: the route turned round and timed with the same model (the climbs become descents and the other way
+// round), sleeping at the same places in reverse, from the day after the last day
+const revSeg=i=>{const hz=(R.d[i]-R.d[i-1])/4,de=R.e[i-1]-R.e[i],vt=de>0?de/300:-de/500;return(Math.max(hz,vt)+Math.min(hz,vt)/2)*S.pace};   // from point i back to i−1
+const revT=(a,b)=>{let h=0;for(let i=a;i>b;i--)h+=revSeg(i);return h};
+function backWalk(){const st=startH(),br=S.breaks?7/6:1,n=DAYS.length,out=[];
+  for(let k=n-1;k>=0;k--){const d=DAYS[k],nb=n-k;let h=0,up=0,dn=0,top=R.e[d.i1];
+    for(let i=d.i1;i>d.i0;i--){h+=revSeg(i);const de=R.e[i-1]-R.e[i];if(de>0)up+=de;else dn-=de;if(R.e[i-1]>top)top=R.e[i-1]}
+    const date=hikeDate(n+nb),sun=HP.sunTimes(D.center.lat,D.center.lon,date,D.tz);
+    out.push({n:nb,from:d.to,to:d.from,a:d.i1,b:d.i0,km:R.d[d.i1]-R.d[d.i0],up,dn,top,h,start:st,arr:st+h*br,date,set:sun.set,wx:HP.wxDay(D,n+nb-1),color:d.color})}
+  return out}
+// rises of 150 m or more on the way back, allowing dips of up to 40 m (as on the profile page, the other way round)
+function backClimbs(W){const cl=[];for(const w of W){let mn=w.a,mx=w.a;
+    for(let i=w.a-1;i>=w.b;i--){if(R.e[i]<R.e[mn]&&R.e[mx]-R.e[mn]<150){mn=i;mx=i;continue}if(R.e[i]>R.e[mx])mx=i;
+      if(R.e[mx]-R.e[i]>40||i===w.b){if(R.e[mx]-R.e[mn]>=150)cl.push({a:mn,b:mx,g:R.e[mx]-R.e[mn],t:revT(mn,mx),w});mn=i;mx=i}}}
+  return cl}
+// where a place on the way out lies on the way back: the day back and the km into it
+const backWhere=i=>{const n=DAYS.length,d=DAYS[R.day[i]-1];return{n:n-d.n+1,km:R.d[d.i1]-R.d[i]}};
+// the kinds of transport, in words (Swiss timetable categories)
+const PTK={IC:'train',ICN:'train',IR:'train',ICE:'train',EC:'train',EN:'night train',TGV:'train',RJX:'train',RE:'regional train',R:'regional train',S:'S-Bahn',SN:'night S-Bahn',
+  PE:'panorama train',EXT:'special train',B:'bus',BUS:'bus',NFB:'bus',KB:'minibus',EV:'replacement bus',TX:'taxi',CC:'rack railway',FUN:'funicular',PB:'cable car',
+  GB:'gondola',SL:'chairlift',BAT:'boat',BAV:'boat',FAE:'ferry',T:'tram',NFT:'tram',M:'metro'};
+const legName=l=>{const w=PTK[l.k]||l.k||'transport',bus=/^(B|BUS|NFB|KB|EV|T|NFT)$/.test(l.k),id=l.n?(bus?l.n:`${l.k} ${l.n}`):'';return(w[0].toUpperCase()+w.slice(1))+(id?` ${id}`:'')};
+const connLegs=c=>`<ul class="legs">${c.legs.map(l=>l.walk?`<li class="lw"><span>walk ${l.walk} min</span></li>`
+  :`<li><b>${l.ad}</b><span>${esc(legName(l))}${l.to?` <i>to ${esc(l.to)}</i>`:''}<small>${esc(l.a)}${l.ap?`, platform ${esc(l.ap)}`:''} → ${esc(l.b)} ${l.bd}</small></span></li>`).join('')}</ul>`;
+const connLine=c=>`${c.dep} → ${c.arr} · ${fmtH(c.min/60)} · ${c.ch?`${c.ch} ${c.ch>1?'changes':'change'}`:'direct'}`;
+const gmaps=(a,b)=>`https://www.google.com/maps/dir/?api=1&origin=${a.lat.toFixed(5)},${a.lon.toFixed(5)}&destination=${b.lat.toFixed(5)},${b.lon.toFixed(5)}&travelmode=transit`;
+function renderBackCard(){const el=$('#backcard');if(!el)return;if(!R||!CLK||isLoop()){el.hidden=true;return}el.hidden=false;
+  const B=D.back,P=B&&B.pt,W=backWalk(),wt=W.reduce((s,w)=>s+w.h,0),pk=HP.backPick(B,CLK[N-1]),kp=a=>`<ul class="kpis">${a.map(([v,l])=>`<li><b>${v}</b><span>${l}</span></li>`).join('')}</ul>`;
+  let h=`<div class="ch"><h2 class="micro">Getting back</h2><span class="micro">to ${esc(DAYS[0].from)}</span></div>`;
+  if(pk&&(pk.next||pk.last)){const c=pk.next||pk.last;h+=kp([[pk.next?pk.next.dep:'–','next'],[fmtH(c.min/60),'travel'],[String(c.ch),c.ch===1?'change':'changes'],[pk.last?pk.last.dep:'–','last']]);
+    if(pk.missed)h+=`<p class="al bad bkal">You arrive at ${fmtClock(CLK[N-1])}, after the last connection back (${pk.last.dep}).</p>`;
+    else if(pk.margin!=null&&pk.margin<.75)h+=`<p class="al warn bkal">The last connection back leaves ${fmtH(pk.margin)} after you can be at the stop.</p>`}
+  else if(B&&B.kind==='osm'&&P&&!P.err){const st=P.f.train||P.f.bus,car=B.car&&!B.car.none?B.car:null;
+    h+=kp([[car?fmtH(car.min/60):'–','by road'],[car?`${Math.round(car.km)}`:'–','km'],[st?(st.d<1000?`${st.d} m`:`${(st.d/1000).toFixed(1)} km`):'–',st&&P.f.train===st?'to a station':st?'to a bus stop':'no stop near']])}
+  else if(B&&B.car&&!B.car.none)h+=kp([[fmtH(B.car.min/60),'by road'],[`${Math.round(B.car.km)}`,'km']])+`<p class="small mute bkal">No train or bus connection found back to ${esc(DAYS[0].from)}.</p>`;
+  else if(B)h+=`<p class="small mute">No train or bus connection found back to ${esc(DAYS[0].from)}.</p>`;
+  else if(BACKRUN)h+=`<div class="skel sk1"></div><div class="skel sk2"></div>`;
+  else h+=`<p class="small mute">${navigator.onLine?'The way back by train and bus shows here.':'The trains and buses back show once the hike opens with a connection.'}</p>`;
+  h+=`<p class="small mute bwalk">On foot the same way: ${W.length} ${W.length>1?'days':'day'} · ${fmtH(wt)} walking</p>`;
+  el.innerHTML=h}
+function backDetail(){if(!R||!CLK)return null;const n=DAYS.length,to=DAYS[0].from,fr=DAYS[n-1].to,arr=CLK[N-1],B=D.back,P=B&&B.pt,pk=HP.backPick(B,arr),W=backWalk(),wt=W.reduce((s,w)=>s+w.h,0),M=[];
+  if(isLoop())return{title:'Getting back',html:dHero('0','km','this hike ends where it starts','var(--good)')+`<p class="small mute">Nothing to plan for the way back.</p>`};
+  const ld=fmtDate(isoDay(hikeDate(n))),a={lat:R.lat[N-1],lon:R.lon[N-1]},b={lat:R.lat[0],lon:R.lon[0]},car=B&&B.car&&!B.car.none?B.car:null;
+  let hero='',pt='';
+  // by train and bus (Switzerland)
+  if(B&&B.kind==='ch'&&P&&!P.err&&!P.none&&!P.same){const qd=P.typ?fmtDate(P.typ,{weekday:'short',day:'numeric',month:'short',year:'numeric'}):ld;
+    const later=pk?P.next.filter(c=>!c.nd&&!c.day&&c!==pk.next&&pk.h(c.dep)>pk.h(pk.next?pk.next.dep:'00:00')&&!(pk.last&&c.dep===pk.last.dep)).slice(0,2):[];
+    if(pk&&pk.next)hero=dHero(fmtH(pk.next.min/60),'',`by train and bus to ${esc(to)} · the ${pk.next.dep} from ${esc(P.f.name)}`,pk.missed?'var(--bad)':pk.margin<.75?'var(--fair)':'var(--good)');
+    else if(pk&&pk.last)hero=dHero(pk.last.dep,'',`the last connection back, before you can be at the stop (${fmtClock(pk.ready)})`,'var(--bad)');
+    const kp=pk&&(pk.next||pk.last)?dKpis([[pk.next?pk.next.dep:'–','leaves'],[pk.next?pk.next.arr:'–','arrives'],[pk.next?String(pk.next.ch):'–','changes'],[pk.last?pk.last.dep:'–','last']]):'';
+    pt=kp+dSec('By train and bus',`<p class="small">From <b>${esc(P.f.name)}</b>${P.f.d>150?`, ${P.f.d<1000?P.f.d+' m':(P.f.d/1000).toFixed(1)+' km'} from where the walk ends (about ${P.f.walk} min on foot, counted in)`:', where the walk ends'}, to <b>${esc(P.t.name)}</b>${P.t.d>150?`, ${P.t.d<1000?P.t.d+' m':(P.t.d/1000).toFixed(1)+' km'} from where it began`:''}.</p>`+
+      (pk&&pk.next?`<p class="micro csub">The first you can catch · ${pk.next.dep} → ${pk.next.arr}</p>${connLegs(pk.next)}`:'')+
+      (later.length?`<p class="micro csub">Later</p><ul class="dlist">${later.map(c=>`<li><b>${connLine(c)}</b><span>${esc(c.legs.filter(l=>!l.walk).map(legName).join(' · '))}</span></li>`).join('')}</ul>`:'')+
+      (pk&&pk.last?`<p class="micro csub">The last of the day</p><ul class="dlist"><li><b>${connLine(pk.last)}</b><span>${esc(pk.last.legs.filter(l=>!l.walk).map(legName).join(' · '))}</span></li></ul>`:'')+
+      (P.nodata?`<p class="small mute">No connection found in the timetable for this date.</p>`:'')+
+      `<p class="small mute dmeta">${P.typ?`The timetable for ${ld} isn’t published yet: these are the times on ${qd}, the same weekday. Lines that run only in summer can differ. The app checks again by itself each week.`:`Timetable for ${ld}.`} Checked ${new Date(B.at).toLocaleDateString('en-GB',{day:'numeric',month:'short'})} · <button type="button" class="lnk" data-dact="backcheck">Check again</button></p>`+
+      `<p class="small"><a href="${gmaps(a,b)}" target="_blank" rel="noopener">Open in Google Maps</a> · <a href="https://www.sbb.ch/en" target="_blank" rel="noopener">SBB timetable and tickets</a></p>`,'Swiss timetable');
+    if(pk&&pk.missed)M.push(['bad',`You reach ${esc(fr)} at ${fmtClock(arr)}, after the last connection back (${pk.last.dep}). Start earlier or walk faster on day ${n}, or plan a night in ${esc(fr)}.`]);
+    else if(pk&&pk.next){M.push([pk.margin<.75?'warn':'ok',`After you arrive at ${fmtClock(arr)}, the ${pk.next.dep} gets you to ${esc(to)} by ${pk.next.arr}.${pk.last?` The last one leaves at ${pk.last.dep}: ${pk.margin<.75?`only ${fmtH(pk.margin)} to spare, so if the day runs late, sleep in ${esc(fr)}.`:`${fmtH(pk.margin)} to spare if the day runs late.`}`:''}`])}
+    M.push(['info','Buy the ticket before you board: in the SBB app or at the machine at the station.'])}
+  else if(B&&B.kind==='osm'&&P&&!P.err){const st=(o,w)=>o?`<li><b>${esc(o.name)}</b><span>${w} · ${o.d<1000?o.d+' m':(o.d/1000).toFixed(1)+' km'} away, about ${o.walk} min on foot</span></li>`:'';
+    const lf=st(P.f.train,'train station')+st(P.f.bus,'bus stop'),lt=st(P.t.train,'train station')+st(P.t.bus,'bus stop');
+    pt=dSec('Trains and buses',(lf?`<p class="micro csub">Near ${esc(fr)}, where the walk ends</p><ul class="dlist">${lf}</ul>`:`<p class="small">No train station within 5 km or bus stop within 2.5 km of ${esc(fr)} on the map.</p>`)+
+      (lt?`<p class="micro csub">Near ${esc(to)}, where it began</p><ul class="dlist">${lt}</ul>`:'')+
+      `<p class="small"><a href="${gmaps(a,b)}" target="_blank" rel="noopener">Find the trains and buses in Google Maps</a></p><p class="small mute dmeta">The app has timetables for Switzerland only, so check the times there, and on the operators’ sites. Stops from OpenStreetMap.</p>`,'from the map');
+    if(!lf)M.push(['warn',`There is no public transport close to ${esc(fr)} on the map: arrange a lift or a taxi before you go${car?` (about ${fmtH(car.min/60)} by road)`:''}.`]);
+    else if((P.f.train||P.f.bus).d>1500)M.push(['info',`The nearest stop is ${((P.f.train||P.f.bus).d/1000).toFixed(1)} km from where the walk ends: count about ${(P.f.train||P.f.bus).walk} more minutes on foot on day ${n}.`]);
+    M.push(['info','Rural buses can run only a few times a day, and less at weekends: check the last one before you set off on the last day.'])}
+  else if(B&&P&&(P.none||P.same))pt=dSec('By train and bus',`<p class="small">${P.same?`${esc(P.f.name)} is the nearest stop to both ends: walk there and back.`:`No stop found near ${esc(P.f?to:fr)} in the Swiss timetable.`}</p>`);
+  else pt=dSec('By train and bus',`<p class="small mute">${BACKRUN?'Looking up the way back…':navigator.onLine?(D.backErr?'The timetable could not be reached just now. <button type="button" class="lnk" data-dact="backcheck">Try again</button>':'Not looked up yet. <button type="button" class="lnk" data-dact="backcheck">Look it up</button>'):'The trains and buses back show once the hike opens with a connection.'}</p>`);
+  // by road
+  const road=dSec('By road',car?`${dKpis([[fmtH(car.min/60),'driving'],[String(Math.round(car.km)),'km']])}<p class="small mute">From ${esc(fr)} to ${esc(to)}, for a lift or a taxi.</p>`
+    :B&&B.car&&B.car.none?`<p class="small">No road for cars reaches ${esc(B.car.at==='from'?fr:to)}${B.car.at==='from'?'':`, so a lift can only take you part of the way`}.</p>`:`<p class="small mute">${B?'No road route found.':'Not looked up yet.'}</p>`);
+  if(!hero)hero=car?dHero(fmtH(car.min/60),'',`by road to ${esc(to)}, ${Math.round(car.km)} km`):dHero(fmtH(wt),'',`on foot the same way, over ${W.length} ${W.length>1?'days':'day'}`);
+  // on foot, the same way back
+  const F=safety(),cl=backClimbs(W),big=cl.reduce((x,c)=>!x||c.g>x.g?c:x,null),up=W.reduce((s,w)=>s+w.up,0),X=R.d[N-1];
+  W.forEach(w=>{if(w.n<W.length){const h=(D.huts||{})[w.to];w.shut=!!h&&openOn(seasonOf(h.open),w.date)===false}});
+  let lo=1e9,hi=-1e9;for(let i=0;i<N;i++){if(R.e[i]<lo)lo=R.e[i];if(R.e[i]>hi)hi=R.e[i]}const Y0=Math.floor(lo/200)*200,Y1=Math.ceil(hi/200)*200,stp=Math.max(1,Math.floor(N/300));
+  const prof=chart(X,Y1-Y0,(x,y)=>{let p='';for(let i=N-1;i>=0;i-=stp)p+=`${x(X-R.d[i]).toFixed(1)},${y(R.e[i]-Y0).toFixed(1)} `;p+=`${x(X).toFixed(1)},${y(R.e[0]-Y0).toFixed(1)}`;
+    return`<polygon points="${x(0)},${y(0)} ${p} ${x(X)},${y(0)}" class="ga"/><polyline points="${p}" class="vl"/>`+W.slice(0,-1).map(w=>`<line x1="${x(X-R.d[w.b])}" x2="${x(X-R.d[w.b])}" y1="${y(0)}" y2="${y(Y1-Y0)}" class="lim"/>`).join('')},{h:160,yl:'m',ys:[0,(Y1-Y0)/2,Y1-Y0].map(Math.round)})
+    .replace(/(<text x="[\d.]+" y="[\d.]+" text-anchor="end">)(\d+)(<\/text>)/g,(m,p1,v,p3)=>p1+nf.format(+v+Y0)+p3);
+  const fs=(F.top||[]).slice(0,3).map(x=>{const p=backWhere(x.i1);return`<li class="al ${x.lvl}">${x.what}<small>${n>1?`Day ${p.n} back · `:''}km ${p.km.toFixed(1)}${(()=>{const nm=nearName(x.nm??x.i0);return nm?` · ${esc(nm)}`:''})()}</small></li>`}).join('');
+  const days=W.map(w=>`<div class="bkday"><p class="micro csub"><span class="dn" style="--c:${w.color}"><i></i>${w.n}</span> ${esc(w.from)} → ${esc(w.to)}</p>`+
+    dKpis([[w.km.toFixed(1),'km'],[nf.format(Math.round(w.up)),'m up'],[fmtH(w.h),'walking'],[fmtClock(w.arr),'arrive']])+
+    (w.wx&&w.wx.pct?`<div class="bwx">${pbar(w.wx.pct,'Day '+w.n+' back')}<p class="small mute">${w.wx.src==='ens'?'Forecast':'Usually'}: ${HP.WXK.filter(k=>w.wx.pct[k]>0).sort((p,q)=>w.wx.pct[q]-w.wx.pct[p]).slice(0,3).map(k=>`${esc(HP.WXT[k].short.toLowerCase())} ${w.wx.pct[k]}%`).join(', ')}</p></div>`:'')+
+    (w.n<W.length&&hutLine(w.to)?`<p class="small dhut">Night: <b>${esc(w.to)}</b> · ${hutLine(w.to)}${w.shut?' · <b class="badt">usually closed then</b>':''}</p>`:'')+
+    `<p class="small mute dmeta">${fmtDate(isoDay(w.date))} · ${fmtClock(w.start)} → ${fmtClock(w.arr)}${S.breaks?' with rests':''} · ${nf.format(Math.round(w.dn))} m down · top ${nf.format(Math.round(w.top))} m · sunset ${fmtClock(w.set)}</p></div>`).join('');
+  const foot=dSec('On foot, the same way back',dKpis([[X.toFixed(1),'km'],[nf.format(Math.round(up)),'m up'],[fmtH(wt),'walking'],[String(W.length),W.length>1?'days':'day']])+`<div class="dfig">${prof}</div>`+days+
+    `<p class="micro csub">Safety: the same paths</p><p class="small"><b style="color:${VERD[F.lvl]?VERD[F.lvl][1]:'inherit'}">${VERD[F.lvl]?VERD[F.lvl][0]:''}</b>${F.T?'':' (from the terrain only: the paths are checked when the hike opens with a connection)'}</p>${fs?`<ul class="alerts sfa">${fs}</ul>`:''}`+
+    `<div class="abtns"><button type="button" class="btn" data-dact="walkback">Plan the walk back as its own hike</button></div><p class="small mute">It is saved as a new hike from ${fmtDate(isoDay(W[0].date))}, with its own 3D view, forecast, safety check and live guide. This hike stays as it is.</p>`,
+    `from ${fmtDate(isoDay(W[0].date))}`);
+  // where a place on the way back is, in words: its name, or the km into that day back
+  const bp=i=>{const nm=nearName(i);if(nm)return nm;const p=backWhere(i);return`km ${p.km.toFixed(1)} of day ${p.n} back`};
+  if(big)M.push(['info',`On foot, the biggest climb going back is ${nf.format(Math.round(big.g))} m, from ${esc(bp(big.a))} up to ${esc(bp(big.b))}, about ${fmtH(big.t)}: on the way out you came down it.`]);
+  const dark=W.find(w=>w.arr>w.set);if(dark)M.push(['warn',`On foot, day ${dark.n} back ends after sunset (${fmtClock(dark.set)}): start earlier, or split the day.`]);
+  W.filter(w=>w.h>10).forEach(w=>{const st=PTS.filter(p=>p.i<w.a-3&&p.i>w.b+3&&(p.kind==='hut'||p.kind==='village')).map(p=>p.name);
+    M.push(['warn',`On foot, day ${w.n} back is ${fmtH(w.h)} of walking: this way round it climbs ${nf.format(Math.round(w.up))} m. ${st.length?`A night at ${esc(st[Math.floor(st.length/2)])} would split it.`:'Consider splitting it.'}`])});
+  const shut=W.filter(w=>w.shut).map(w=>w.to);if(shut.length)M.push(['bad',`On foot, ${shut.map(esc).join(' and ')} ${shut.length>1?'are':'is'} usually closed on the nights back: call before you count on ${shut.length>1?'them':'it'}.`]);
+  return{title:'Getting back',html:hero+pt+road+foot+dMeans(M)+`<p class="dsrc">Trains and buses in Switzerland: transport.opendata.ch, from the search.ch timetable. Road: BRouter. On foot: the DIN 33466 hiking formula at your pace, the other way round.</p>`}}
 function dayBrief(d){
   const plain=S.wx==='plain';let cold=null,hot=null,gust=null,cloudKm=0,wetKm=0,snowKm=0,th=null,nofc=0;
   for(let i=d.i0;i<=d.i1;i++){const c=cond(i,CLK[i]),seg=i<d.i1?R.d[i+1]-R.d[i]:0;if(c.st.nofc)nofc++;
@@ -427,7 +540,7 @@ function renderBrief(){if(!R)return;const sc=SCN[S.wx];
 /* ---------- the cards: weather by day, daylight, steepness ---------- */
 const deg=v=>`${Math.round(v)}°`.replace('-','−');
 function tempRange(d){let lo=1e9,hi=-1e9;for(let i=d.i0;i<=d.i1;i+=3){const T=cond(i,CLK[i]).T;lo=Math.min(lo,T);hi=Math.max(hi,T)}return`${deg(hi)} / ${deg(lo)}`}
-function renderCards(){if(!R)return;renderWxCard();renderDaylight();renderZones();renderWindCard();renderViewsCard();renderSafety()}
+function renderCards(){if(!R)return;renderWxCard();renderDaylight();renderZones();renderWindCard();renderViewsCard();renderSafety();renderBackCard();clearTimeout(BACKT);BACKT=setTimeout(()=>fetchBack(false),1500)}
 function renderWxCard(){const el=$('#wxcard'),L=likely(),pc=L&&L.pct,days=S.day?[DAYS[S.day-1]]:DAYS;
   const src=!L?'':L.src==='ens'?`${D.ens.members} forecast runs`:L.src==='mix'?'forecast runs and records':`records ${D.clim&&D.clim.years?D.clim.years.join('–'):''}`;
   let h=`<div class="ch"><h2 class="micro">Weather chance</h2><span class="micro">${esc(src)}</span></div>`;
@@ -518,6 +631,7 @@ function renderWindCard(){const el=$('#windcard');if(!el)return;if(S.wx==='plain
 function detail(kind){if(!R)return null;const ds=daysOf(),sub=S.day?`Day ${S.day}`:DAYS.length>1?'All days':'';
   if(kind==='views')return viewsDetail();
   if(kind==='safety')return safetyDetail();
+  if(kind==='back')return backDetail();
   if(kind==='wind'){if(!WF||S.wx==='plain')return null;const os=ds.map(windStats),all=os.reduce((a,o,k)=>o.max.g>a.g?{g:o.max.g,i:o.max.i}:a,{g:0}),ttot=os.reduce((s,o)=>s+o.tt,0)||1;
     const head=os.reduce((s,o)=>s+o.head,0)/ttot,strong=os.reduce((s,o)=>s+o.strong,0),feel=os.reduce((a,o)=>o.feel.f<a.f?o.feel:a,{f:99}),mean=os.reduce((s,o)=>s+o.mean*o.tt,0)/ttot,rose={rose:new Float32Array(16),roseV:new Float32Array(16)};
     os.forEach(o=>{for(let s=0;s<16;s++){rose.rose[s]+=o.rose[s];rose.roseV[s]+=o.roseV[s]}});let su=0,sv=0;os.forEach(o=>{const w=vec(1,o.from);su-=w[0]*o.tt;sv-=w[1]*o.tt});const from=(Math.atan2(su,sv)*180/Math.PI+360)%360;
@@ -1636,7 +1750,8 @@ vA=step(seed.w,a)*(.5+.45*seed.x)*smoothstep(0.,.05,h)*clamp(sz/(2.*uPx),.35,1.)
   const testStrike=hold=>{const now=performance.now();strike(now);nextStrike=now+(hold?1e9:5000);if(BS&&hold){BS.strokes=[{t:now,d:1e9,a:1}];BS.end=now+1e9}return!!BS};
   return{time(force){apply(force)},frame,ex(){U.uEx.value=S.ex;placeY();dirty=true;fitShadow()},U,prep,testStrike}}
 
-HP.viewer={open,close,current:()=>D,refresh:()=>{if(R)renderBrief()},
+HP.viewer={open,close,current:()=>D,refresh:()=>{if(R)renderBrief()},backCheck:()=>fetchBack(true),
+  back:()=>R&&CLK?{loop:isLoop(),pick:HP.backPick(D.back,CLK[N-1]),walk:backWalk().map(({n,from,to,km,up,dn,h,arr,top})=>({n,from,to,km,up,dn,h,arr,top})),key:backKey(),run:BACKRUN}:null,
   // what the live guide needs: the route, the days, the places, the planned times, the map pictures and the trail check
   state:()=>R&&WALK?{D,R,N,DAYS,PTS,WALK,CLK,BLOBS,S,F:safety(),T:trailOK()?D.trail:null,cc:trailOK()?D.trail.cc||[]:[],sos:sosList(trailOK()?D.trail.cc:[]),TURN}:null,
   show:i=>{if(!R)return;i=Math.max(0,Math.min(N-1,i|0));if(S.day&&R.day[i]!==S.day)selectDay(R.day[i],false);setIndex(i);if(V3&&V3.focus)V3.focus(i)},recheck:()=>runTrail(true),safety:()=>{if(!R)return null;const F=safety();return{lvl:F.lvl,items:F.items.map(x=>({lvl:x.lvl,k:x.k,i0:x.i0,i1:x.i1,what:x.what.replace(/<[^>]+>/g,''),where:whereOf(x).replace(/<[^>]+>/g,''),why:String(x.why||'').replace(/<[^>]+>/g,''),near:nearName(x.i0),day:R.day[x.i0],km:+kmIn(x.i0).toFixed(1)})),top:F.top.map(x=>x.k),marks:F.marks.length,junc:F.junc.length,hard:F.hard,mapped:+F.mapped.toFixed(3),marked:+F.marked.toFixed(3),official:F.official==null?null:+F.official.toFixed(3),checked:!!F.T}},updateForecast:()=>updateForecast(true),detail:k=>{try{return detail(k)}catch(e){console.error(e);return null}},
